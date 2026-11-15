@@ -1458,6 +1458,18 @@ export const MODELS = {
     // (E143: 128 levels) is rejected with E_PAR (-17). 14 is the lowest priority above all firmware tasks, so every
     // driven firmware task preempts the lab's home task. Measured: taskprobe over E113's booted kernel (1..13 used).
     lab_pri: 14,
+    // db_init_saves: the number of synchronous flash-saves the blank-camera settings-DB init performs (src/lab/menu.mjs
+    // store_init, the S-FLASHSAVE count check). E143's DB init 0x503c5473 writes the defaults and persists them inline:
+    // at 0x503c5530 it calls the flash-save 0x503eee94 once (guarded by cmp 0,d3; bne at 0x503c5522), so the lab's
+    // default expects exactly 1. E113's store is the 2022 OM-1 rewrite, not relocated E143 code: its DB init 0x50173d5c
+    // (coverage 538 instr vs E143's 5302) initializes the RAM store through the per-store worker 0x504c41fc (x5) but
+    // performs NO synchronous flash-save — the save functions 0x50203a74 / 0x50203aa1 are absent from the entire DB-init
+    // coverage trace (0 occurrences). E113 persists via deferred message saves instead: 0x50203a74/0x50203aa1 pack a
+    // 16-byte request (call 0x50042bd7) and post it through the lock-guarded dispatcher 0x50213104 (acquire 0x7dc90f9f ->
+    // worker 0x5013b747 -> release) from app-level sites (store.app_saves: 0x5065eadb etc.), which run AFTER store_init,
+    // not during the DB init. So E113's blank DB init flash-saves 0 times. The menu needs the RAM store the DB init fills,
+    // not the NVRAM persist, so 0 is correct and menu-usable. Measured in E113's own image + the DB-init coverage trace.
+    db_init_saves: 0,
     overrides: {
       // OlyTaSp (the RTOS task-spawn primitive, src/lab/rtos.mjs RTOS): the cross-build map leaves E143's 0x5002c5da
       // unanchored (it is in port.json `unmapped`), so the Kernel's hook of it throws. Measured in E113's run-time image:

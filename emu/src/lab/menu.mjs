@@ -743,8 +743,12 @@ export class MenuLab extends T.TextDisplayLab {
     }
     const db = this.native(SETTINGS_DB_INIT, null, 'settings-DB init 0x503c5473');
     if (nvram) this.nvram_clock();
-    else if (this.store_log.flash_save.length !== 1) {
-      throw new MenuError(`settings-DB init returned with S-FLASHSAVE hit ${this.store_log.flash_save.length} times, expected once`);
+    // E143's DB init persists the blank defaults inline (one S-FLASHSAVE call, 0x503c5530 -> 0x503eee94). A later store
+    // design (E113, the 2022 OM-1 rewrite) initializes the RAM store but defers persistence to app-level message saves
+    // (store.app_saves, posted through 0x50213104) that run after store_init, so its blank DB init flash-saves 0 times;
+    // MODEL_INFO.db_init_saves (models.mjs, measured from the DB-init coverage trace) pins the expected count, default 1.
+    else if (this.store_log.flash_save.length !== (MODEL_INFO.db_init_saves ?? 1)) {
+      throw new MenuError(`settings-DB init returned with S-FLASHSAVE hit ${this.store_log.flash_save.length} times, expected ${MODEL_INFO.db_init_saves ?? 1}`);
     }
     // S-NVRAM: the blank path's saves of E and M run natively and print their marks; the flash save calls the damage
     // check 0x50003d04, which prints and returns while the boot's init 0x50003cf9 (not run by the lab) has not set
