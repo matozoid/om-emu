@@ -143,7 +143,7 @@ export const KIND3_AREA = GUI.kind3;
 // MENU), which a guard of one record refused (GUARD), leaving the menu over the shooting screen's last frame (X)
 export const GUI_GUARDS = [...GUI.banks.flatMap(([base, size, count]) => Array.from({ length: count }, (_, e) => [(base + e * size) >>> 0, (count - e) * HEIGHT])), KIND3_AREA];
 export const NRECORDS = EXPECTED_RECORDS.length;
-export const KN_LAB_PRI = 60, KN_TASKS = [A(0x50023A0C), A(0x501C6D8C)];
+export const KN_LAB_PRI = MODEL_INFO.lab_pri ?? 60, KN_TASKS = [A(0x50023A0C), A(0x501C6D8C)];
 
 // OSD_DEFAULTS.kernel: the kernel a lab built without one runs on (check_display, check_liveview and check_text set
 // it from --kernel)

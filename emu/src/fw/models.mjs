@@ -1360,7 +1360,11 @@ export const MODELS = {
     name: 'E-M10', bin: 'OLY_E_113_1400_0000_0000.BIN', version: '1.4', res_block: 'blk01200000.OE.0101.bin', checked: false,
     rom_len: 18874304, rom_sha256: 'e2b227662d782a2c75c6c6e872bc34fdfa45d34a9b1b2cee04a4435a00c54f0e',
     image_base: 0x7d991020,
-    res_len: 25165760, res_sha256: '6f4f15acebbcd6513f9e9fe6afea8bd3e1b839896f5a7d44f34838b8ab46fa9d',
+    // res_len/res_sha256 are the resource PREFIX (the block up to its index's last entry, src/fw/resprefix.mjs resExtent),
+    // not the whole 25165760-byte block: the earlier values were the full-file length and sha, which checkBlock (it hashes
+    // resPrefix(b)) rejects. Measured from E113's own block01200000: extent 13446112 bytes, prefix sha 8c5ec690... (same
+    // convention as E120, whose res_len 18415584 is its extent, verified).
+    res_len: 13446112, res_sha256: '8c5ec690ec756fa4167a08020ee4017c5cc18f6f711fa027b575401f034f2754',
     // rear LCD 3.0" 1.037M dots; EVF (VF-4-class) ~1.44M dots
     panels: { tft: [720, 480], evf: [800, 600] },
     card_fs: {
@@ -1372,14 +1376,194 @@ export const MODELS = {
       hls: 'rule',
     },
     rec_native: false,
-    board: { family: 'E118' },
+    // core_byte: the board-identity byte the lab's core-id getter returns (src/fw/facts.mjs coreByte, src/lab/hle.mjs
+    // core_id, menu.mjs dial select). The coreByte rule wants one leaf getter `movbu (0x8ff0xxxx),d0; retf`; E113 has
+    // NONE (the rule returns null, board defers to hand). Measured why: E143's board byte (0x97f00254) is a strap-lookup
+    // code written by a board-detect (`mov 255,d1; movbu d1,(0x97f00254)`, then a table 0x600297a8 overwrites it) for a
+    // multi-variant body; E113 (E-M10, one fixed board) has NO such detect — a byte scan finds no `mov 255 -> (0x8ff..)`
+    // store and no 0x8ff slot read-then-compared as a board code. So there is no runtime variant byte to pin. In the HLE
+    // lab the board-detect never runs, so the reference E143 reads its own core_byte as 0 at menu time (board 0, the
+    // default path) — measured. E113 must read 0 the same way: 0x8ff00188 is the E118 family's board-byte slot (its
+    // sibling E120's getter `movbu (0x8ff00188),d0`), and E113's own code never touches 0x8ff00188 (0 accesses in its
+    // image), so the lab's zero-filled SRAM keeps it 0 = board 0, identical to E143. modelcheck's menu/dial checks gate it.
+    // bus_ram (src/dev/bus.mjs Bus extra ranges, src/machine.mjs): extra backed bus ranges E113's firmware reads that
+    // the reference E143 never touches, so the bus device (DRAM + the two live-view banks only) faults them (BUS, fault
+    // 2). Served zero until written, like the live-view banks. Measured in E113's own image: the registry bootstrap
+    // (E113-specific; E143/E120 run different code at this offset and never reach here) verifies a registry/NVRAM-backup
+    // partition via the 0x50040b87 checksum routine (reads a header halfword at the block base, then sums `length`
+    // halfwords; blank -> header != expected 0xd -> fail -> firmware takes the blank/default path, correct for a first
+    // boot). The partition sits above E113's DRAM top (0xA0000000 + dram_size 0x1d971200 = 0xBD971200) inside the
+    // 0xB8..0xBF CPU window, which at the reset segment (winreg 0x17161514) aliases it identity -> unbacked -> fault 2.
+    // A full-image uint32 scan for aligned block bases in [0xBFF80000, 0xC0000000) finds four store bases, each
+    // referenced several times, laid out contiguously to the window top: 0xBFF8A000 (x5, 0x40000), 0xBFFCA000 (x6,
+    // 0x20000), 0xBFFEA000 (x8, 0x10000), 0xBFFFA000 (x4, ~0x6000). 0xBFF8A000 and 0xBFFEA000 are proven by boot faults.
+    // Back the enclosing region page-aligned: 0xBFF80000..0xC0000000 (0x80000) covers all four stores and their extents
+    // (the 0xA000 lead is page alignment). Only E113 sets this; E120/E122 (same E118 board) never access it.
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]] },
+    // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
+    // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
+    // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one
+    // listed E143 site K_CFLUSH_RETURN = A(0x5004086A) has no place in E113 (map leaves it unplaced -> 0xfe04086a), and
+    // E113's registry bootstrap (E113-specific code; E143/E120 differ here) flushes from its own site. Measured in
+    // E113's own image: the registry init 0x50040aeb calls K_CFLUSH from disasm 0x50041b48. E113 is not port_via, so
+    // no knob carries; given by hand as E113's own disasm address (as ports.mjs lists E139/E148's own cflush sites).
+    cflush_returns: [0x50041b48],
     // EVF device code + output-device property id, measured from E113's own image: its single EVF-writer
     // (`mov (abs32),d0; cmp 6,d0; bne; mov 4014,d0; mov 8,d1`) names propId 4014 and EVF code 6, identical to
     // E120 (same E118 family). The cross-build map leaves E143's PROP_DEVICE_SITES null, so the facts.mjs
     // propDevice/evfCode rules emit no `prop` for E113; supplied by hand here with that measurement.
     prop: { device: 4014, evf_code: 6 },
+    // display.timer_sleep (src/lab/menu.mjs S-TIMERSLEEP): the display code's software-timer sleep, called with a0
+    // null for a one-shot wait. facts.mjs timerSleep finds it by a byte signature present on the 18 later images but
+    // NOT on E113 (older build), so it is supplied by hand. Measured in E113's own image, not carried from the map:
+    // E113's TFT command-list processor at 0x50224485 runs the exact family idiom `movhu (2,a2),d0; mov 0,a0; inc d0;
+    // call 0x50219e36` (a0 null = default callback, d0 = cmd value + 1), identical to E120's TFT cmd-list sleep call
+    // at 0x502d0265 -> its timer_sleep 0x502c384e. The callee 0x50219e36 is the timer_sleep by structure, matching
+    // E120 0x502c384e exactly: default-callback pick (`mov 0x7dba5b27,a2; cmp 0,a3; mov a0,a2`), create one-shot
+    // (call 0x500347ec, kind 3), start (call 0x50052d48), then with no callback given `mov -1,d0` (timeout -1) +
+    // movhu(0x7d9b0570) flag + OlyEvWt flag-wait (call 0x50030118) -- the no-timeout wait that defines timer_sleep.
+    display: { timer_sleep: 0x50219e36 },
+    // timer_pool_init (src/lab/display.mjs H-SWTIMERPOOL): E113's software-timer init allocates its 16 timer objects
+    // from a slot pool rather than filling a table inline (E143/E120). The allocator 0x500510d2 bit-scans the pool
+    // free-list bitmap at 0xa0a55e20 (mask 0x7fff) via FFS helper 0x5004ad59; an unseeded (zero) bitmap scans to 32,
+    // the allocation returns 0xffff, every record is marked reserved, and the later acre_tmr create 0x50052e09 finds
+    // no free slot -> firmware error 0x19001802 at 0x50052edc. The seed routine 0x50005ab9 sets the bitmap (|= 0x7fff
+    // / 0x3f) and the record table at 0xa0a55c7c; it is reached via the timer-module init 0x50005a7b, which the
+    // firmware runs off an init-fn table (its pointer is the only image reference to 0x50005a7b, the word 0x7d996a9b
+    // at 0x500d1dac) that the HLE boot never iterates. Measured in E113's own image; E143/E120 have no such pool.
+    // frame: the function is reached only through the init-fn table, never a direct `call`, so no call-site frame
+    // exists to infer. It manages its own 4-byte local frame (`add -4,sp` at entry, released by `ret [],4` at
+    // 0x50005a88, whose imm=4 = the call frame imm + 4), so the invoking frame is [mask 0x00, size 0x00].
+    timer_pool_init: { fn: 0x50005a7b, frame: [0x00, 0x00] },
+    // E113's display task (as E120/E122's, src/lab/kernel.mjs allow set): the display task init 0x50219680 starts a
+    // task the generic allow list (GUI/GENIFA/EMPTY/EYEFI) does not name, so the kernel's start of it throws "not
+    // modelled". Measured in E113's own image: the task body is 0x5021c82c (a real task, `movm [d2,d3,a2,a3],(sp); add
+    // -1240,sp; ...`), and its entry pointer (runtime 0x7dbad84c) is referenced once, from the static task table at
+    // image offset 0x191a8 (disasm 0x500191a8), exactly the E118-family form E120 uses (its row 0x51). Started by the
+    // display task init step (X: boot reaches the start of it from display.mjs:944).
+    extra_tasks: [0x5021c82c],
+    // disp_sync_init (src/lab/display.mjs start): E143's display-sync module is absent from the E118 family (as E120,
+    // its evidence there). Measured: the "disp_sync_work" trace string E143 carries (3 occurrences) is absent from
+    // E113's image (0 occurrences, same as E120), so there is no disp_sync init to run and A(0x507f2fe0) has no place.
+    disp_sync_init: false,
+    // frame_period_us (src/lab/display.mjs start, A-PERIOD): E113's TFT/EVF vtotal getters are the constant/mode-switch
+    // form (overrides 0x501d8aba/0x50023bab below), so the port's framePeriod rule answers null (src/fw/facts.mjs
+    // VTOTAL_CONSTANT) and no frame period word is placed. As the E118 family does (E120/E122), the lab assumes E143's
+    // TFT period word 16683 us (59.94 Hz) for both devices; the period only sets the lab clock's per-line time
+    // (period x 1000 / vtotal ns), not menu behaviour.
+    frame_period_us: { tft: 16683, evf: 16683 },
     g4set: G4SET_UNCHECKED,
-    overrides: {},
+    // lab_pri: the injected home task's priority (src/lab/menu.mjs LAB_PRI). E113's kernel configures 16 priority levels
+    // (acre_tsk's max-priority field, read at init = 16) and its firmware tasks span priorities 1..13; the default 60
+    // (E143: 128 levels) is rejected with E_PAR (-17). 14 is the lowest priority above all firmware tasks, so every
+    // driven firmware task preempts the lab's home task. Measured: taskprobe over E113's booted kernel (1..13 used).
+    lab_pri: 14,
+    overrides: {
+      // OlyTaSp (the RTOS task-spawn primitive, src/lab/rtos.mjs RTOS): the cross-build map leaves E143's 0x5002c5da
+      // unanchored (it is in port.json `unmapped`), so the Kernel's hook of it throws. Measured in E113's run-time image:
+      // its 18 RTOS primitives sit in one contiguous block and 17 anchor; OlyTaSp is the function bracketed by the two
+      // that do — OlyTaSt -> 0x500307df (ends `ret [d2,d3],12` at 0x50030894) and OlyTaWu -> 0x5003090a. The function at
+      // 0x50030897 between them is byte-for-byte the OlyTaSt/OlyTaSp sibling shape (`mov d0,d2; clr d3; mov 4096,d0;
+      // and; cmp; bne ...` event-flag set, ending `ret [d2,d3],12` at 0x50030907), differing from OlyTaSt only by the
+      // task-mode immediate (65537 Start vs 65538 Spawn) — the exact Start/Spawn distinction. So OlyTaSp -> 0x50030897.
+      '0x5002c5da': { to: '0x50030897', why: 'OlyTaSp (RTOS task-spawn), unanchored by the map; the function between the anchored OlyTaSt 0x500307df and OlyTaWu 0x5003090a, the OlyTaSt/Spawn sibling shape with task-mode immediate 65538 (kernel hook)' },
+      // LEVEL_SLOTS[0]: the H-VECINIT check (src/lab/kernel.mjs:103) reads the 7 IVARs the firmware's VECINIT wrote and
+      // requires disasm(VECTOR_PAGE | IVAR[level]) == IRQ.LEVEL_SLOTS[level]. Measured E113's run-time IVARs =
+      // [0x20,0x48,0x50,0x58,0x60,0x68,0x70]; with VECTOR_PAGE 0x7d9a0000 and IMAGE_BASE 0x7d991020 those disassemble to
+      // [0x5000f000,0x5000f028,0x5000f030,0x5000f038,0x5000f040,0x5000f048,0x5000f050] — byte-for-byte the E143 LEVEL_SLOTS
+      // (the 0x5000xxxx kernel region is model-invariant, flash-copied code). Levels 1..6 anchor; only level 0's E143
+      // address 0x5000f000 is left unplaced by the cross-build map (A() returns 0xfe00f000). Identity override, as E122's.
+      '0x5000f000': { to: '0x5000f000', why: 'LEVEL_SLOTS[0]: E113 IVAR[0]=0x20, VECTOR_PAGE 0x7d9a0000 -> disasm 0x5000f000, the E143 slot address unchanged (kernel region is model-invariant); the map leaves it unplaced (irq)' },
+      // LEVEL_HANDLERS[5] and [6]: the kcb[88] check (src/lab/kernel.mjs:107-108) requires disasm(kcb[88][level]) ==
+      // IRQ.LEVEL_HANDLERS[level]. E113's kcb[88] table after kernel init reads (disasm notation) a uniform-stride-0x3e run
+      // 0x50034a29,0x500349eb,0x500349ad,0x5003496f,0x50034931,0x500348f3,0x500348b5 (levels 0..6). Levels 0..4 anchor; the
+      // map leaves E143's level-5 handler 0x5002e68f and level-6 0x5002e64c unplaced (A() -> 0xfe02e68f/0xfe02e64c). The
+      // measured E113 values continue the table's exact 0x3e progression: L5 -> 0x500348f3, L6 -> 0x500348b5.
+      '0x5002e68f': { to: '0x500348f3', why: 'LEVEL_HANDLERS[5]: E113 kcb[88][5] after kernel init = 0x500348f3 (next in the table\'s 0x3e stride after L4 0x50034931); the map leaves it unplaced (irq)' },
+      '0x5002e64c': { to: '0x500348b5', why: 'LEVEL_HANDLERS[6]: E113 kcb[88][6] after kernel init = 0x500348b5 (next in the table\'s 0x3e stride after L5 0x500348f3); the map leaves it unplaced (irq)' },
+      // TASK_START (src/lab/kernel.mjs:163, the kernel's first-dispatch task-launch trampoline): the map leaves E143's
+      // 0x50011825 unplaced. E143's body at 0x50011825 is a 9-instruction trampoline `call UNLOCK; mov d2,d0; calls (a2);
+      // call X,[a2],8; mov -127,d0; call Y; break; mov psw,d0; retf`. E113 block00 has one byte-for-byte match: a fresh
+      // function (the previous one ends `rets` at 0x50011a37) at 0x50011a39 running the identical sequence `call ..;
+      // mov d2,d0 (88); calls (a2) (f0 f2); call 0x500109b2,[a2],8; mov -127,d0 (80 81); call ..; break (ff); mov psw,d0;
+      // retf`. The `calls (a2)` dispatching the task entry in a2 with exinf in d2 is the trampoline's signature. -> 0x50011a39.
+      '0x50011825': { to: '0x50011a39', why: 'TASK_START kernel task-launch trampoline, unanchored by the map; the only E113 block00 function matching E143 0x50011825\'s `call UNLOCK; mov d2,d0; calls (a2); call X,[a2],8; mov -127,d0; call Y; break; mov psw,d0; retf` shape, a fresh function after the rets at 0x50011a37 (kernel hook)' },
+      // TP_I2C_WRITE / TP_I2C_READ (src/lab/display.mjs, the touch panel's I2C transport the DisplayLab hooks): the map
+      // leaves E143's 0x501e4dfd/0x501e4f2a unplaced (A() -> 0xfe1e4dfd/0xfe1e4f2a). The facts.mjs touchI2c finder keys
+      // off the trace strings "[TP_I2C] write start"/"read start", which E113 (like the whole E118 family) does not hold
+      // (X: string scan of E113's image), so it places nothing; neither E143's nor E120's byte signature matches E113's
+      // (its touch driver is a third build), so no signature search finds them. Located by structure instead: E113's touch
+      // driver sits around the placed touch_api.open 0x5022b31b, and the bulk-register op 0x5022bcd0 calls two sibling
+      // transport functions, 0x5022ba06 and 0x5022bade, both entered with d0=0x48 (the touch controller's I2C slave) and
+      // d1=0x14 (reg 0x1c14, the controller-version register). Both are byte-for-byte the E118-family I2C-transport shape,
+      // matching E120's verified pair (read 0x502d9bd2, write 0x502d9ca6) instruction-for-instruction: guard the args
+      // (==255/==1), `movhu (cfg),d0; mov -1,d1; exth; call bus-helper,[d2,d3,a2],20`, a cd-call, `movhu (cfg2),d0; call
+      // ,12`, then store a direction byte to a flag word and `call I2C-op,[d2,d3,a2,a3],52`, then loop the data. The
+      // direction byte disambiguates the pair exactly as on E120 (which stores 1 for write, 2 for read to 0x61879769):
+      // 0x5022bade does `mov 1,d0; movbu d0,(0x607023f5)` = WRITE, 0x5022ba06 does `mov 2,d0; movbu d0,(0x607023f5)` =
+      // READ. The read-before-write ordering and ~0xd8 gap also match E120's (read below write, 0xd4 apart), confirming
+      // the family layout. So TP_I2C_WRITE -> 0x5022bade, TP_I2C_READ -> 0x5022ba06.
+      '0x501e4dfd': { to: '0x5022bade', why: 'TP_I2C_WRITE (touch I2C write), unplaced by the map and untraced by E113; the E118-family write transport by structure (guard ==255/==1; movhu cfg; call bus-helper [d2,d3,a2]/20; cd-call; call I2C-op [d2,d3,a2,a3]/52), its direction byte `mov 1,d0; movbu d0,(0x607023f5)` = write (E120\'s write 0x502d9ca6 stores 1 likewise), slave 0x48 reg 0x14, read below its read sibling 0x5022ba06 as on E120 (display)' },
+      '0x501e4f2a': { to: '0x5022ba06', why: 'TP_I2C_READ (touch I2C read), unplaced by the map and untraced by E113; the E118-family read transport by structure, the sibling 0xd8 below the write 0x5022bade, its direction byte `mov 2,d0; movbu d0,(0x607023f5)` = read (E120\'s read 0x502d9bd2 stores 2 likewise), slave 0x48 reg 0x14 (display)' },
+      // TICK_INIT (src/lab/display.mjs, the kernel tick timers init H-BOOTTIME runs natively). E143\'s monolithic
+      // 0x5003121c (inits channels 138..141 then writes the HW timer block) has no 1:1 place in E113: the E118 family
+      // splits the tick init into per-channel functions dispatched by a table, so the cross-build map leaves it
+      // unplaced. Measured in E113\'s own image: 0x500373c5 is the CPU0/channel-1 tick init -- it registers a kernel
+      // timer object with id/IRQ 58 (`mov 58,d0; call 0x50034a98`, IRQ_base 57 + channel 1) and starts HW timer
+      // channel 1 at reload 999 (`mov 999,d0; mov d0,(0x9890002c)`) with enable/start writes to the 0x98900000 block
+      // (or 64, or 128), matching the E118-family board note (src/fw/board.mjs: "the tick init the boot calls for CPU 0
+      // starts channel 1 at reload 999 on IRQ 58"). Its consecutive sibling 0x50037452 is the channel-2 (IRQ 59) init,
+      // as the family starts channels 2/3 from CPUs 1/2\'s own inits. The HLE checks only kernel_ticks [1].
+      '0x5003121c': { to: '0x500373c5', why: 'TICK_INIT (kernel tick timers), E143\'s monolithic init split per-channel by the E118 family so unplaced by the map; E113\'s CPU0/channel-1 tick init measured in-image: registers kernel timer id/IRQ 58 (`mov 58,d0; call 0x50034a98`) and starts HW channel 1 at reload 999 (`mov 999,d0; mov d0,(0x9890002c)`) + 0x98900000 enable writes, matching the E118 board note (channel 1, reload 999, IRQ 58); sibling 0x50037452 = channel 2' },
+      // HW_TIMER_INIT / TIMER_INIT (src/lab/display.mjs, the two H-BOOTTIME inits the boot runs back-to-back right
+      // after the tick init). Measured from E113\'s own boot: the boot-init function at 0x5000031b runs the exact E143
+      // idiom `mov strptr,a0; call <print>; call 0x5005bb48,[d2,d3],12; call 0x50052d0e,[d2],8; call <print>`, 1:1 with
+      // E143\'s 0x5002cd7b `call 0x500642dd (HW_TIMER_INIT),[d2,d3],12; call 0x50058959 (TIMER_INIT),[d2],8` (same
+      // regs/stack, same surrounding debug prints; the same boot-init also calls dpc.init 0x5004c68a, confirming the
+      // function). HW_TIMER_INIT 0x5005bb48 walks the family\'s 10-entry HW-timer table (`cmp 10,d3`/`cmp 10,d2`,
+      // movhu (2/4/6,a0) per entry), the E118-family hw-timer-init shape from src/fw/board.mjs; the map leaves both
+      // E143 addresses unplaced (family restructure), so supplied here.
+      '0x500642dd': { to: '0x5005bb48', why: 'HW_TIMER_INIT (hardware timer table init), unplaced by the map (E118 family restructure); E113\'s boot at 0x5000031b calls it `[d2,d3],12` exactly where E143 0x5002cd7b calls 0x500642dd; 0x5005bb48 walks the 10-entry HW-timer table (`cmp 10,d3`/`cmp 10,d2`, movhu (2/4/6,a0)) per the E118 board note' },
+      '0x50058959': { to: '0x50052d0e', why: 'TIMER_INIT (software timer init), unplaced by the map; E113\'s boot at 0x50000322 calls it `[d2],8` immediately after HW_TIMER_INIT, exactly where E143 0x5002cd82 calls 0x50058959; soft_tick is null on the E118 family (its soft timers run on a second unit the lab does not model), so the HLE starts no channel to check here' },
+      // TFT / EVF vtotal getters (src/lab/display.mjs DEVICE.{tft,evf}.vtotal_fn, the per-device vertical-total the frame
+      // period's line time is read from). The cross-build map leaves E143's 0x501d8aba (TFT) and 0x50023bab (EVF) both
+      // unplaced (A() -> 0xfe1d8aba/0xfe023bab): E143's 0x50023bab falls in the early shared region, but E113's build is
+      // shorter there (that offset is 0xff padding in E113's image), so neither getter sits at its E143 address. Measured
+      // in E113's own image, both getters are tiny constant/mode-switch leaf functions `mov <vtotal>,d0; retf`:
+      //   TFT 0x50224830 returns the constant 495 -- byte-for-byte identical to E120's verified TFT getter 0x502d06f6
+      //   (same 6-entry cluster 495,0,2,0,910 and same 4-store setup 256/65536/16777216/0 -> (a0,4,8,12)); 495 = the TFT
+      //   panel's 480 active lines (panels.tft [720,480]) + 15 blanking, matching E143/E120 TFT = 495 exactly.
+      //   EVF 0x5021d3d6 returns 625 (mode global 0x606fe520 == 1) or 728 (else) -- the mode-switched form E143's EVF
+      //   getter also takes (0x50023bab switches its vtotal 1315/1375/675/657 by frame period) and E137's does (reads
+      //   global 0x62316834, 787/900/819); it is the only E113 panel getter that reads a refresh-mode global and returns
+      //   an EVF-magnitude total. 625/728 = the EVF panel's 600 active lines (panels.evf [800,600]) + blanking, > the TFT
+      //   total as on E143/E120 (EVF 825/1315 > TFT 495). In the zero-filled lab SRAM the global reads 0, so the lab takes
+      //   the 728 branch (deterministic). framePeriod answers null for constant/mode-switch getters (src/fw/facts.mjs,
+      //   VTOTAL_CONSTANT / E122 note), so no frame period word is placed and frame_period_us supplies the period below.
+      '0x501d8aba': { to: '0x50224830', why: 'TFT vtotal getter, unplaced by the map; E113\'s `mov 495,d0; retf` at 0x50224830, byte-for-byte E120\'s verified TFT getter (495,0,2,0,910 cluster + 256/65536/16777216/0 setup); 495 = 480 active lines (panels.tft) + 15 blanking, = E143/E120 TFT (display DEVICE.tft.vtotal_fn)' },
+      '0x50023bab': { to: '0x5021d3d6', why: 'EVF vtotal getter, unplaced by the map (E143\'s 0x50023bab offset is 0xff padding in E113\'s shorter early region); E113\'s mode-switched `movbu (0x606fe520),d1; mov 625,d0; cmp 1,d1; mov 728,d0; retf` at 0x5021d3d6 -- the only E113 panel getter reading a refresh-mode global, the form E143 (period-switched 1315/1375/675/657) and E137 (global 0x62316834, 787/900/819) EVF getters take; 625/728 = 600 active lines (panels.evf) + blanking, > TFT 495; lab global=0 -> 728 (display DEVICE.evf.vtotal_fn)' },
+      // TOUCH_INIT (src/lab/play.mjs H-TPINIT, the touch-panel driver init the display open runs natively on the E118
+      // family, touch_init_early). E143\'s 0x501e3dca (clr d0; movbu d0,(flag); movhu (reg0),d0; movhu (reg1),d1; mov
+      // 8,a0; call <slave-8 register>; cmp -1,d0; bne +; errprint; ...) is unplaced by the map. Measured in E113\'s own
+      // image: 0x5022b19b is the same function -- entry after the previous ret at 0x5022b198, `clr d0; movbu
+      // d0,(0x607023a0); movhu (0x7d9b072e),d0; movhu (0x7d9b0580),d1; exth; exth; mov 8,a0; call 0x50030544,[d2,d3],8;
+      // cmp -1,d0; bne 0x5022b1ca; mov strptr,a0; call 0x50005e65 (errprint)`, byte-structural match to E143 0x501e3dca
+      // (same clear-flag + two-reg load + slave-8 register call + cmp -1 error path). It sits 0x180 before E113\'s placed
+      // TP_OPEN 0x5022b31b (A(0x501e40da)), the touch module\'s own cluster; its flag 0x607023a0 is the module\'s
+      // (0x607023a4 = TP_MASK_WORD, stored by the mask setter 0x5022b37e just past TP_OPEN).
+      '0x501e3dca': { to: '0x5022b19b', why: 'TOUCH_INIT (touch-panel driver init, H-TPINIT), unplaced by the map; E113\'s 0x5022b19b is the same function (entry after ret at 0x5022b198): `clr d0; movbu d0,(0x607023a0); movhu (0x7d9b072e),d0; movhu (0x7d9b0580),d1; mov 8,a0; call 0x50030544 (slave-8 register); cmp -1,d0; bne; call 0x50005e65 (errprint)`, byte-structural match to E143 0x501e3dca (clear flag + two-reg load + slave-8 register + cmp -1 error path); 0x180 before placed TP_OPEN 0x5022b31b, same touch module' },
+      // K-CRT-134D (menu.mjs store_init): the C-runtime flash-window clock read `mov (SCPU_CLOCK),d0; retf`, which the
+      // lab hooks (never runs) to read the SCPU counter. It is called once in E143, so it is never paired-twice and the
+      // cross-build map leaves it unplaced (port.json unmapped 0x3ffe134d); the hook still needs a real E113 address or
+      // refuseUnmapped throws at registration. E113's flash library loads from file offset 0x10497e0 (0x1000 bytes) to
+      // runtime 0x47001000 (board.library). Its `mov (0x98e00098),d0; retf` sits at file 0x1049e48 = disasm 0x51049e48
+      // (SCPU_CLOCK = 0x98e00000 + 0x98, the E118 family's scpu.clock), window offset 0x668 -> runtime 0x47001668
+      // (preceded by the `mov (0x98e00050)` / `mov (0x98e0009c)` sibling window getters, exactly as E143's flash lib).
+      // The PORT value is that runtime in the lab's disassembly notation: runtime - IMAGE_BASE(0x7d991020) + 0x50000000
+      // = 0x19670648 (A()'s hle.mjs runtime() maps it back to 0x47001668; same scheme as placed memcpy 0x1966ffe0 ->
+      // 0x47001000, memset 0x196700ec -> 0x4700110c).
+      '0x3ffe134d': { to: '0x19670648', why: 'K-CRT-134D C-runtime flash-window SCPU-clock read (`mov (0x98e00098),d0; retf`), hooked by the lab but unplaced by the map (called once in E143, not paired-twice). E113 flash lib loads file 0x10497e0 -> runtime 0x47001000; this function is at file 0x1049e48 (disasm 0x51049e48), window offset 0x668 -> runtime 0x47001668. PORT value 0x19670648 = 0x47001668 - IMAGE_BASE 0x7d991020 + 0x50000000, so A()/runtime() yields 0x47001668 (same scheme as memcpy 0x1966ffe0->0x47001000)' },
+    },
   },
 };
 export const codeOf = (m) => 'E' + m.bin.slice(6, 9);

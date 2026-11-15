@@ -463,7 +463,12 @@ export function uiin_layout(image) {
       throw new PlayError(`UI_IN record ${g} of ${N} (${h8(rec)}): list ${h8(list)}, ${bytes} bytes of ${bits} bits, ${n} entries, ${v.u8(rec + 11)}: not a key group`);
     }
     const entries = [];
-    if (n) { const table = v.u32(list); for (let i = 0; i < n; i++) entries.push([Math.floor(i / bits), i % bits, v.u32(table + 8 * i), v.u8(table + 8 * i + 4), v.u8(table + 8 * i + 5)]); }
+    // The record's list field points to the variant array (u32 per variant); v.u32(list) is variant 0's entry table.
+    // E113 (E-M10, code-high build) flattens this: its record stores variant 0's table address directly in the list
+    // field, one indirection fewer than E143 (D: list 0x7dbc12fc holds the 8-byte entries {0xc,1,0}.. not a pointer).
+    // Detect by whether v.u32(list) is itself an in-image pointer (E143's variant-0 table) or not (E113's first code);
+    // when it is not, list already addresses the entries. Safe for E143/E120, whose variant tables are in-image.
+    if (n) { let table = v.u32(list); if (!v.has(table)) table = list; for (let i = 0; i < n; i++) entries.push([Math.floor(i / bits), i % bits, v.u32(table + 8 * i), v.u8(table + 8 * i + 4), v.u8(table + 8 * i + 5)]); }
     groups.push({ bytes, bits, entries, old: v.u32(rec + 4) });
   }
   return { groups };

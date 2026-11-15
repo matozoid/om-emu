@@ -54,7 +54,12 @@ export const GPIFONT_FILE = new TextEncoder().encode('gpifont.c\0');
 export const SETUP_TAB = 7;
 export const PROP_GUI_SITES = [A(0x503EFF61)];
 export const DROPPED_SENDS = [[A(0x600431D8), 10, A(0x50045474)]];
-export const LAB_PRI = 60, GUI_START_MS = 2000, GUI_START_SLICE_MS = 100;
+// LAB_PRI: the priority of the lab's injected home task. acre_tsk rejects a priority above the kernel's configured
+// maximum (µITRON E_PAR = -17), and the task must sit numerically below (lower priority than) every firmware task the
+// lab drives so they preempt it when run. E143's kernel has 128 priority levels and firmware tasks spanning 1..69, so
+// 60 works there (and carries to E120/E143-family bodies). E113 (E-M10 Mk1) has only 16 levels with firmware tasks at
+// 1..13, so 60 is invalid; MODEL_INFO.lab_pri pins its value (14, just below all firmware). Default stays 60.
+export const LAB_PRI = MODEL_INFO.lab_pri ?? 60, GUI_START_MS = 2000, GUI_START_SLICE_MS = 100;
 export const EV_WRAPPERS = new Set(['OlyEvSt', 'iOlyEvSt', 'OlyEvWt', 'OlyEvCl', 'OlyEvDl']);
 // the boot's state the lab's start leaves unset (src/fw/facts.mjs bootState): UI_IN's boot key (S-BOOTKEY,
 // src/lab/play.mjs) and the stages' ready word (S-BOOTSTAGE); read where used

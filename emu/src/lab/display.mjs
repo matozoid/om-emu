@@ -882,6 +882,19 @@ export class DisplayLab extends OsdLab {
       if (IRQ.irq_timer(ch) < 0) continue;                   // no such channel on the model's board
       for (let b = 0; b < IRQ.BANKS.length; b++) if (intc.bank_level(b, IRQ.irq_timer(ch))) { attached.push(ch); break; }
     }
+    // H-SWTIMERPOOL: a build whose software-timer init allocates its timer objects from a slot pool (a free-list
+    // bitmap + a fixed record table) instead of filling a table inline. E113 is such a build: its TIMER_INIT worker
+    // (0x50052dbc) registers 16 entries through the allocator 0x500510d2, which bit-scans the pool bitmap at
+    // 0xa0a55e20 (mask 0x7fff, 15 slots) via the FFS helper 0x5004ad59 -- an empty bitmap scans to 32 (>= 15) and the
+    // allocation returns 0xffff, so every record is marked reserved (field +4 = 2) and the later acre_tmr create
+    // (0x50052e09) finds no free slot, logging firmware error 0x19001802 at 0x50052edc. The pool is seeded (bitmap
+    // |= 0x7fff / 0x3f, records at 0xa0a55c7c set free) by 0x50005ab9, reached only through the timer-module init
+    // 0x50005a7b, which the firmware runs off an init-fn table (ptr at 0x500d1dac) the HLE boot never iterates. Run it
+    // natively here, before TIMER_INIT. E143/E120 fill the timer table inline (no pool) and define no seed.
+    if (MODEL_INFO.timer_pool_init) {
+      const { fn, frame } = MODEL_INFO.timer_pool_init;
+      this.step(`H-SWTIMERPOOL software-timer slot pool seed ${h8(fn)}`, () => this.call(fn, null, null, frame, 20000));
+    }
     run('H-BOOTTIME software timer init 0x50058959 (boot call 0x5002cd82)', TIMER_INIT);
     // a board whose software-timer init starts no channel of its own (timer.soft_tick null, src/fw/board.mjs) has
     // nothing to check here

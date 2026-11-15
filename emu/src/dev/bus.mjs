@@ -19,11 +19,15 @@ const WINREG = 0x98100000, WINREG_OFF = 0x58, WINREG_RESET = 0x17161514, WINDOW 
 const SEGMENT = 2 ** 27, PAGE = 0x10000;
 const hex8 = (v) => (v >>> 0).toString(16).padStart(8, '0');
 export class Bus {
-  constructor(machine = null) {
+  constructor(machine = null, extra = []) {
     this.m = machine;
     this.winreg = WINREG_RESET;
     this.base = [BUS_DRAM, LV[0][0], LV[1][0]];
     this.size = [DRAM_SIZE, LV[0][1] - LV[0][0], LV[1][1] - LV[1][0]];
+    // board-given extra backed bus ranges (above DRAM, below 4 GiB), RAM allocated lazily like the LV banks: a model
+    // whose firmware reads a region the reference body never touches (E113's registry verifies a 256 KiB backup block
+    // at bus 0xBFF8A000). Each is [base, size]; served zero until written, so the checksum fails and the blank path runs.
+    for (const [b, s] of (extra || [])) { this.base.push(b >>> 0); this.size.push(s >>> 0); }
     this.lvPages = new Map();                 // 4 KiB page number -> Uint8Array
     this.onRemap = null;                      // the machine's: (segment) after every remap
     addRegion({ base: WINREG, size: 0x1000, kind: K_MMIO, name: 'om1.buswin',
@@ -119,12 +123,12 @@ export class Bus {
   // addr .. addr + len - 1 inside one backed range
   span(addr, len) {
     addr >>>= 0;
-    for (let i = 0; i < 3; i++) if (addr >= this.base[i] && (addr - this.base[i]) + len <= this.size[i]) return true;
+    for (let i = 0; i < this.base.length; i++) if (addr >= this.base[i] && (addr - this.base[i]) + len <= this.size[i]) return true;
     return false;
   }
   left(addr) {
     addr >>>= 0;
-    for (let i = 0; i < 3; i++) if (addr >= this.base[i] && addr - this.base[i] < this.size[i]) return this.size[i] - (addr - this.base[i]);
+    for (let i = 0; i < this.base.length; i++) if (addr >= this.base[i] && addr - this.base[i] < this.size[i]) return this.size[i] - (addr - this.base[i]);
     return 0;
   }
   // address_space_read / write on om1.bus of a range the caller checked with span() (or left()).

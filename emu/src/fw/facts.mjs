@@ -5321,6 +5321,13 @@ const PERIOD_GETTER = [0xfc, 0xa4, null, null, null, null, 0xde, 0x00, 0x00];
 // null (E122's TFT 0x50302e5f returns 495 and its EVF's 0x502fa8eb a constant too, and no `mov (W),d0; retf` lies
 // within 4 KiB of either, X; E144's 0x50021f23 also returns 495, but its period getter follows, D)
 const VTOTAL_CONSTANT = [0x2c, null, null, 0xde, 0x00, 0x00];
+// a vtotal function that picks one of two constants by a display-mode global (not a frame period), `movbu (G),d1; mov
+// A,d0; cmp 1,d1; beq +; mov B,d0; retf`, with no period getter run after it: the rule answers null as for the pure
+// constant (E113's EVF getter 0x5021d3d6 reads G 0x606fe520 and returns 625 for mode 1 else 728 -- the EVF panel's 600
+// active lines + blanking, not a period; no `mov (W),d0; retf` follows it, so frame_period_us supplies the period, as
+// for the TFT constant. The form differs from E143's/E137's EVF getters, which switch the vtotal BY the frame period
+// and so DO have a period getter the run above finds; this one switches by a mode global and has none)
+const VTOTAL_MODESWITCH = [0xfc, 0xa9, null, null, null, null, 0x2c, null, null, 0xa5, 0x01, 0xc8, null, 0x2c, null, null, 0xde, 0x00, 0x00];
 function framePeriod(img, vtotal) {
   for (let o = vtotal - 0x50000000, end = o + PERIOD_SPAN; o < end; o++) {
     if (!bytesAt(img, o, PERIOD_GETTER)) continue;
@@ -5333,6 +5340,7 @@ function framePeriod(img, vtotal) {
     o = p - 1;
   }
   if (bytesAt(img, vtotal - 0x50000000, VTOTAL_CONSTANT)) return null;
+  if (bytesAt(img, vtotal - 0x50000000, VTOTAL_MODESWITCH)) return null;
   throw new Error(`framePeriod: no 'mov (W),d0; retf' run with its setter storing one W within ${PERIOD_SPAN} bytes after the vtotal function at ${h8(vtotal)}`);
 }
 
