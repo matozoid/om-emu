@@ -1407,7 +1407,15 @@ export const MODELS = {
     // set, the buswin device backs every non-0x58 offset as a scratch register file (reset 0, width 1/2/4) so the RMW
     // reads back its own prior writes; 0x58 keeps its strict window-remap semantics. These pads carry no HLE-relevant
     // side effect (hardware pin direction/drive). Set on the E118 family where this library runs; E143 keeps the tripwire.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true },
+    // engine.depth / engine.word22: E113 draws its OSD fills at depth code 5 (= 4 bytes/pixel; its bit22-clear
+    // fills decode to width*4 == stride exactly, e.g. 2048x57 stride 8192, 544x1 stride 2176) and sets w[3] bit 22
+    // on single-row remainder fills, where the reference E118 bodies (E120/E122) use depth 3 and never set bit 22.
+    // The strict OSD-engine model (src/dev/engine.mjs) hard-codes depth==3 and bit-22-reserved, so E113's first UI
+    // draw was rejected (DEPTH 5 / WORD_BITS) and the firmware then divu-by-zeroed on the resulting zero count at
+    // 0x7d9962c0. Admit E113's format by hand; E120/E122 keep the strict check. (The fill's pixel math stays 1 B/px,
+    // which is exact for E113's black surface-clears on lazily-zeroed DRAM; a full 4bpp model is pending non-black
+    // draws.) bit22's exact field meaning on E113 is not yet pinned -- see docs/mods/related-projects.md Wall 3.
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true } },
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one

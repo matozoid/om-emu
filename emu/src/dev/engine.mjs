@@ -8,6 +8,12 @@ import { BOARD } from '../fw/board.mjs';
 // the model's engine (src/fw/board.mjs; E144: base 0x9c100000, registers 0x00..0x50 only, the list base a byte
 // address, 16 guard slots: the first 8 at 0x040, the rest at 0x8000)
 const BE = BOARD.engine, ENC2 = BE.enc === 2;
+// Fill/copy pixel-depth code and the w[3]/w[2] bit-22 gate. The reference bodies (E143/E120/E122) draw the OSD at
+// depth 3 and never set bit 22, so the strict model hard-coded both. E113 (E-M10, same E118 board) draws its OSD
+// fills at depth 5 (= 4 bytes/pixel: its bit22-clear fills decode to width*4 == stride exactly) and sets bit 22 on
+// single-row remainder fills (meaning not yet pinned). A model gives engine.depth / engine.word22 by hand
+// (src/fw/models.mjs) to admit its own format; everyone else keeps the strict depth-3, bit-22-reserved check.
+const DEPTH_OK = BE.depth ?? 3, WORD22_OK = BE.word22 === true;
 // Kind-2 command words (E144, D: the builders at 0x50ca50c3, 0x50ca51fc, 0x50ca54c6, 0x50ca5545): the high bits of an
 // address are bits 29..30 of the engine's 31-bit bus address, a destination's at w0 bits 29..30 unshifted, a copy
 // source's at w0 bits 26..27; the bus address is the CPU's uncached one without bit 31 (0x2fca0000 for 0xafca0000)
@@ -92,9 +98,9 @@ export class Engine {
   cmdFill(w) {
     const extra = (w[0] & ~(0xFFFF | 1 << 16 | 1 << 17 | 1 << 20 | (ENC2 ? 3 << 29 : 7 << 24))) >>> 0;
     if (extra) return this.fail(E.WORD_BITS, 0, extra);
-    if (w[3] & (1 << 22)) return this.fail(E.WORD_BITS, 3, w[3]);
+    if (!WORD22_OK && (w[3] & (1 << 22))) return this.fail(E.WORD_BITS, 3, w[3]);
     const depth = (w[0] >>> 8) & 0xff;
-    if (depth !== 3 || (w[2] & 7)) return this.fail(E.DEPTH, depth, w[2] & 7);
+    if (depth !== DEPTH_OK || (w[2] & 7)) return this.fail(E.DEPTH, depth, w[2] & 7);
     if (w[1] > 0xff) return this.fail(E.COLOR_HIGH, 0, w[1]);
     const wm1 = sizeM1(w[3] >>> 11, w[0], 17), hm1 = sizeM1(w[3], w[0], 16);
     if (wm1 === 0xfff || hm1 === 0xfff) return this.fail(E.SIZE_4096, wm1, hm1);
@@ -110,10 +116,10 @@ export class Engine {
   cmdCopy(w) {
     const extra = (w[0] & ~(0xFFFF | 1 << 16 | 1 << 17 | 1 << 20 | 1 << 21 | (ENC2 ? 3 << 26 | 3 << 29 : 7 << 24 | 7 << 28))) >>> 0;
     if (extra) return this.fail(E.WORD_BITS, 0, extra);
-    if (w[2] & (1 << 22)) return this.fail(E.WORD_BITS, 2, w[2]);
+    if (!WORD22_OK && (w[2] & (1 << 22))) return this.fail(E.WORD_BITS, 2, w[2]);
     if (w[4] & 0x7FFFFF) return this.fail(E.WORD_BITS, 4, w[4]);
     const depth = (w[0] >>> 8) & 0xff;
-    if (depth !== 3 || (w[1] & 7) || (w[3] & 7)) return this.fail(E.DEPTH, depth, (w[1] & 7) << 4 | (w[3] & 7));
+    if (depth !== DEPTH_OK || (w[1] & 7) || (w[3] & 7)) return this.fail(E.DEPTH, depth, (w[1] & 7) << 4 | (w[3] & 7));
     const wm1 = sizeM1(w[2] >>> 11, w[0], 17), hm1 = sizeM1(w[2], w[0], 16);
     if (wm1 === 0xfff || hm1 === 0xfff) return this.fail(E.SIZE_4096, wm1, hm1);
     const width = wm1 + 1, height = hm1 + 1;
@@ -147,7 +153,7 @@ export class Engine {
     if (w[3] & ~0x3FE) return this.fail(E.WORD_BITS, 3, w[3]);
     if (w[0] & 0x6000) return this.fail(E.BMP_SCALE, w[0], n > 4 ? w[4] : 0);
     const depth = (w[0] >>> 8) & 7;
-    if (depth !== 3 || (w[2] & 7)) return this.fail(E.DEPTH, depth, w[2] & 7);
+    if (depth !== (DEPTH_OK & 7) || (w[2] & 7)) return this.fail(E.DEPTH, depth, w[2] & 7);
     const src = bus(w[1] >>> 0);
     if (!this.bus.span(src, 4)) return this.fail(E.DMA_RANGE, src, 4);
     const hdr = new Uint8Array(4);
