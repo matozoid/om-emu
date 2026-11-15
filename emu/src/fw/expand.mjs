@@ -31,11 +31,20 @@ export function expandImage(rom, { base = IMAGE_BASE, preload = BOARD.preload } 
 // its run-time offset (address - base), so every reader of the image by run-time address sees what the code sees,
 // and the machine loads them with the image.
 function relocate(img, base, rows) {
-  if (!rows.length) return img;
-  const end = Math.max(img.length, ...rows.map(([, len, to]) => to - base + len));
+  // Only reset-head copies that land at or above the image base fold into this buffer, whose index is
+  // (run-time address - base). A copy whose destination is BELOW the base cannot be a non-negative
+  // offset here: E113 runs its code high (image base 0x7d991020) and the reset head preloads data low
+  // into DRAM (0x6000xxxx), ~474 MiB below the code. Those low rows are DRAM data, not code, so no
+  // byte-pattern rule reads them from the image, and the machine writes them into DRAM directly
+  // (src/machine.mjs, after the image copy). Fold the at/above-base rows here and skip the below-base
+  // ones. Bodies whose preload is entirely at/above the base (E143/E144/E120/... every ported body so
+  // far) are unaffected — none has a below-base row.
+  const up = rows.filter(([, , to]) => to >= base);
+  if (!up.length) return img;
+  const end = Math.max(img.length, ...up.map(([, len, to]) => to - base + len));
   const out = new Uint8Array(end);
   out.set(img);
-  for (const [from, len, to] of rows) out.set(img.subarray(from, from + len), to - base);
+  for (const [from, len, to] of up) out.set(img.subarray(from, from + len), to - base);
   return out;
 }
 function expand(rom) {

@@ -88,6 +88,12 @@ export function onMachine(fn) {
 // watched; null, the default: the whole image in DRAM, nothing changes).
 export const WATCH_LOG_MAX = 200000;
 export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 1000000, clock = () => performance.now(), mutant = 0, oneInsn = false, keepStderr = false, coverage = null, hdmi = false, audio = false, cores: coresOpt = null, unloaded = null } = {}) {
+  // The run-time DRAM window must contain both the firmware's managed DRAM (BOARD.dram_size, the dramSize
+  // fact — the heap top) and the linked run-time image. E113 links its code high at 0x7d991020, in reserved
+  // DRAM ABOVE the managed-heap top the fact reports, so size DRAM to cover the image too (capped below at the
+  // DRAM_MAX 512 MiB chip by the guard). For every body whose image ends within its managed DRAM (E143, E120,
+  // ...) image-end <= dram_size, so this Math.max is a no-op and nothing changes.
+  if (rom) dramBytes = Math.max(dramBytes, IMAGE_BASE - 0x60000000 + rom.length);
   if (dramBytes > mem.DRAM_MAX || dramBytes < 64 << 20) throw new Error(`om-emu: DRAM must be 64..${mem.DRAM_MAX >> 20} MiB`);
   const myGen = ++generation;
   const tCreate = clock();
@@ -205,6 +211,17 @@ export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 10
   if (IMAGE_BASE < 0x60000000 || IMAGE_BASE - 0x60000000 + rom.length > dramBytes) throw new Error(`createMachine: the run-time image ${hex8(IMAGE_BASE)}+0x${rom.length.toString(16)} is outside the DRAM 0x60000000+0x${dramBytes.toString(16)}`);
   mem.U8.set(rom.subarray(0, n1), mem.ROM_OFF); mem.markDirty(mem.ROM_OFF, n1);
   mem.U8.set(rom, copy);
+  // Reset-head preload rows whose destination is BELOW the image base (E113 runs code high at image base
+  // 0x7d991020 and preloads data low into DRAM at 0x6000xxxx): src/fw/expand.mjs leaves these out of the
+  // image buffer — it is indexed address-minus-base and cannot hold a below-base address — so load them
+  // into DRAM here from their source bytes in the image. Every ported body so far has its preload at or
+  // above the base, so this loop is empty for them and the folded copy above already placed their data.
+  for (const [from, len, to] of BOARD.preload ?? []) {
+    if (to >= IMAGE_BASE) continue;
+    if (to < 0x60000000 || to - 0x60000000 + len > dramBytes) throw new Error(`createMachine: the preload row ${hex8(to)}+0x${len.toString(16)} is outside the DRAM 0x60000000+0x${dramBytes.toString(16)}`);
+    const off = mem.DRAM_OFF + (to - 0x60000000);
+    mem.U8.set(rom.subarray(from, from + len), off); mem.markDirty(off, len);
+  }
   // S-STALERAM: the ranges the boot does not load hold the fill in DRAM (the flash view keeps the block as it is)
   for (const g of unloaded?.gaps ?? []) {
     if (g.lo < IMAGE_BASE || g.hi > IMAGE_BASE + rom.length || g.lo >= g.hi) throw new Error(`createMachine: the unloaded range ${hex8(g.lo)}..${hex8(g.hi)} is not inside the run-time image`);
