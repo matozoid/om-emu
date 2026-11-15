@@ -315,7 +315,11 @@ export class MenuLab extends T.TextDisplayLab {
   route_rtos() {
     const vsync = new Set([...D.VSYNC_FLAG_IDS, ...D.VSYNC_ALIAS_IDS].map((a) => { const b = this.sim.read(a, 2); return b[0] | b[1] << 8; }));
     const change = D.HAS_CHANGE ? this._queue(D.CHANGE_QUEUE) : null;
-    const panel = this._queue(PANEL_FLAG);
+    // panel: the id of the flag the panel driver's serial transfers complete on (S-PANELDONE answers the open's wait on
+    // it). Default is PANEL_FLAG (E143's EVF serial-completion flag, cross-build-mapped), but a model whose display build
+    // reorganised the flag gives the right word by hand (MODEL_INFO.display.panel_flag; E113's open waits on flag 138 at
+    // word 0x7d9b056e, not the map's 108 at 0x7d9b06c4). None elsewhere -> PANEL_FLAG, as before.
+    const panel = this._queue(MODEL_INFO.display?.panel_flag ?? PANEL_FLAG);
     this.panel_answered = 0;                       // S-PANELDONE: the waits answered so far (the player lists it once one was)
     // S-FRAMEWAIT's flag (src/fw/facts.mjs frameWait, the word the device open waits on per frame); E143's null: the
     // lab leaves its open's wait native, as before (its start does not reach it, X); null too on a build with no such
@@ -1050,6 +1054,17 @@ export class MenuLab extends T.TextDisplayLab {
     if (q === this._queue(D.DISPLAY_QUEUE)) return super._sync_send(hle, r);
     for (const [qa, c, ra] of DROPPED_SENDS) {
       if (q === this._queue(qa) && cmd === c && site === ra) {
+        this.kernel.events.push(['send', `queue ${q} cmd ${cmd}`, `param 0x${r.a0.toString(16)}`, where(r.mdr)]);
+        this.dropped_sends.push([q, cmd, h8(site)]);
+        hle.finish(r, { d0: 0 });
+        return;
+      }
+    }
+    // MODEL_INFO.extra_dropped_sends (models.mjs): model-scoped drops keyed on queue id directly (not a word address),
+    // for a serial-to-panel send whose receiver the lab does not model (E113's PER_SIO queue-73 command list). Its
+    // transfer completion is answered by S-PANELDONE on display.panel_flag.
+    for (const [qid, c, ra] of (MODEL_INFO.extra_dropped_sends ?? [])) {
+      if (q === qid && (c === null || cmd === c) && (ra === null || site === ra)) {
         this.kernel.events.push(['send', `queue ${q} cmd ${cmd}`, `param 0x${r.a0.toString(16)}`, where(r.mdr)]);
         this.dropped_sends.push([q, cmd, h8(site)]);
         hle.finish(r, { d0: 0 });

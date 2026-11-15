@@ -1399,7 +1399,15 @@ export const MODELS = {
     // 0x20000), 0xBFFEA000 (x8, 0x10000), 0xBFFFA000 (x4, ~0x6000). 0xBFF8A000 and 0xBFFEA000 are proven by boot faults.
     // Back the enclosing region page-aligned: 0xBFF80000..0xC0000000 (0x80000) covers all four stores and their extents
     // (the 0xA000 lead is page alignment). Only E113 sets this; E120/E122 (same E118 board) never access it.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]] },
+    // buswin_pads: the 0x98100000 block is a GPIO/pad-control register bank, not just the window-control register at
+    // offset 0x58 (A17). E113's flash-library pad-setup does read-modify-write on the pad registers at offsets 0x00,
+    // 0x04, 0x08, 0x10 (0x51049e62 `mov (a0),d; or 16,d; mov d,(a0)` set-bit-4, and 0x51049e96 `and -17/-193` clear-bit),
+    // run during UI_IN init from the relocated flash library (0x47001xxx). The reference body's lab path never touches
+    // these offsets, so src/dev/bus.mjs faults on them as unmodelled (the tripwire that surfaced this). With this fact
+    // set, the buswin device backs every non-0x58 offset as a scratch register file (reset 0, width 1/2/4) so the RMW
+    // reads back its own prior writes; 0x58 keeps its strict window-remap semantics. These pads carry no HLE-relevant
+    // side effect (hardware pin direction/drive). Set on the E118 family where this library runs; E143 keeps the tripwire.
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true },
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one
@@ -1422,7 +1430,36 @@ export const MODELS = {
     // E120 0x502c384e exactly: default-callback pick (`mov 0x7dba5b27,a2; cmp 0,a3; mov a0,a2`), create one-shot
     // (call 0x500347ec, kind 3), start (call 0x50052d48), then with no callback given `mov -1,d0` (timeout -1) +
     // movhu(0x7d9b0570) flag + OlyEvWt flag-wait (call 0x50030118) -- the no-timeout wait that defines timer_sleep.
-    display: { timer_sleep: 0x50219e36 },
+    // display.panel_flag (src/lab/menu.mjs route_rtos S-PANELDONE): the word holding the id of the event-flag the panel
+    // driver's PER_SIO serial transfers complete on. S-PANELDONE answers the display-open wait on it at once, because the
+    // lab models no panel-serial channel. The lab's default PANEL_FLAG (A(0x60043188), E143's EVF serial-completion flag)
+    // cross-build-maps for E113 to word 0x7d9b06c4 = flag id 108 (58 refs), but E113's 2014 display open does NOT wait on
+    // 108 — both the TFT HAL (0x7dbb5d3f) and the api_tft EVF open (0x7dbae225) wait OlyEvWt on word 0x7d9b056e = flag id
+    // 138 (13 refs), set by the serial completion callback 0x5021d235 (iOlyEvSt 0x500300c9 / OlyEvSt 0x5003004e on the
+    // same word). Measured in E113's own image (image read: u16 at 0x7d9b056e = 138). Supplied by hand because the map
+    // places PANEL_FLAG at the wrong analogue for E113's reorganised display build. E143/E120 keep PANEL_FLAG (no key).
+    // timer_sleep: see the S-TIMERSLEEP note just below.
+    display: { timer_sleep: 0x50219e36, panel_flag: 0x7d9b056e },
+    // dial (src/lab/menu.mjs dial_init, dialSelect): E113 is the E118-family single-fixed-table form
+    // (table_ptr null) — the dial init takes one fixed id table, with no board select and no table
+    // pointer to read back, so src/lab/menu.mjs dial_init runs DIAL_INIT alone (the override 0x5014b7c7
+    // below). The cross-build map leaves E143's dial unmeasured for E113 (facts.mjs could not key off
+    // E143's structure), supplied by hand. Measured in E113's own image: DIAL_INIT 0x500f9774 builds its
+    // dial slots (slot RAM 0xa0a5c67c) from the fixed descriptor table at runtime 0x7dbc0de0 via the
+    // `udfu01 12,d0 ... setlb` scaled copy loop — byte-for-byte E120's verified DIAL_INIT 0x5015d3a6
+    // (table 0x601a8810, slots 0xa1c17b80) with no board-select branch. table0 is E113's raw instruction
+    // immediate (a runtime flash-rodata pointer; E113 keeps the id table in flash, unlike E120's RAM
+    // copy); it is logged only (the table_ptr-null branch does not validate it). E143/E120 have no key.
+    dial: { table_ptr: null, table0: 0x7dbc0de0 },
+    // extra_dropped_sends (src/lab/menu.mjs _sync_send): synchronous queue sends this model issues that have no receiver
+    // in the lab, dropped like the built-in DROPPED_SENDS. Each entry is [queue-id, cmd, disasm-site]; a null cmd or site
+    // is a wildcard. E113's panel driver enqueues its serial command list to the PER_SIO serial worker on message queue 73
+    // before waiting for the transfer completion (flag 138, display.panel_flag above); the lab models neither the queue-73
+    // worker nor its completion IRQ, so every queue-73 send is dropped and the completion answered by S-PANELDONE. Queue 73
+    // is specifically that serial worker's input queue, so matching the queue id alone is correct — the open sends several
+    // commands from adjacent PER_SIO sites (0x500545c3, 0x5005459c, ...). Measured in E113's own image (PER_SIO 0x7d9e55xx,
+    // cmd 0). E143/E120 have no serial-to-panel send on this queue (no key).
+    extra_dropped_sends: [[73, null, null]],
     // timer_pool_init (src/lab/display.mjs H-SWTIMERPOOL): E113's software-timer init allocates its 16 timer objects
     // from a slot pool rather than filling a table inline (E143/E120). The allocator 0x500510d2 bit-scans the pool
     // free-list bitmap at 0xa0a55e20 (mask 0x7fff) via FFS helper 0x5004ad59; an unseeded (zero) bitmap scans to 32,
@@ -1458,6 +1495,12 @@ export const MODELS = {
     // (E143: 128 levels) is rejected with E_PAR (-17). 14 is the lowest priority above all firmware tasks, so every
     // driven firmware task preempts the lab's home task. Measured: taskprobe over E113's booted kernel (1..13 used).
     lab_pri: 14,
+    // nav_pri: the priority the nav/home task raises itself to for the nav phase (src/lab/nav.mjs NAV_PRI, chg_pri
+    // TSK_SELF). E143's 50 (just above its home task's 60) is above E113's 16-level kernel, so chg_pri(50) returns
+    // E_PAR (-17). 14 (= lab_pri) is the valid analogue: the home task keeps its priority through the nav phase, the
+    // firmware GUI tasks at 1..13 still preempt to process each posted event, and equal priority keeps the home task's
+    // own GUI program from running mid-post. This is the configuration check_nav's pri60 mutant exercises (NAV_PRI = LAB_PRI).
+    nav_pri: 14,
     // db_init_saves: the number of synchronous flash-saves the blank-camera settings-DB init performs (src/lab/menu.mjs
     // store_init, the S-FLASHSAVE count check). E143's DB init 0x503c5473 writes the defaults and persists them inline:
     // at 0x503c5530 it calls the flash-save 0x503eee94 once (guarded by cmp 0,d3; bne at 0x503c5522), so the lab's
@@ -1517,6 +1560,16 @@ export const MODELS = {
       // the family layout. So TP_I2C_WRITE -> 0x5022bade, TP_I2C_READ -> 0x5022ba06.
       '0x501e4dfd': { to: '0x5022bade', why: 'TP_I2C_WRITE (touch I2C write), unplaced by the map and untraced by E113; the E118-family write transport by structure (guard ==255/==1; movhu cfg; call bus-helper [d2,d3,a2]/20; cd-call; call I2C-op [d2,d3,a2,a3]/52), its direction byte `mov 1,d0; movbu d0,(0x607023f5)` = write (E120\'s write 0x502d9ca6 stores 1 likewise), slave 0x48 reg 0x14, read below its read sibling 0x5022ba06 as on E120 (display)' },
       '0x501e4f2a': { to: '0x5022ba06', why: 'TP_I2C_READ (touch I2C read), unplaced by the map and untraced by E113; the E118-family read transport by structure, the sibling 0xd8 below the write 0x5022bade, its direction byte `mov 2,d0; movbu d0,(0x607023f5)` = read (E120\'s read 0x502d9bd2 stores 2 likewise), slave 0x48 reg 0x14 (display)' },
+      // DIAL_INIT (the dial module init, src/lab/menu.mjs dial_init / MODELS dial above): the cross-build map
+      // leaves E143's 0x5014b7c7 unplaced (A() -> 0xfe14b7c7). Measured in E113's own image: 0x500f9774 is the
+      // dial module init, byte-for-byte the E118-family form E120's verified DIAL_INIT 0x5015d3a6 takes --
+      // `call X,[d2],8; clr d0; mov d0,(0xa0a5c694); call Y,[a2],8`, build the slot struct on stack, then the
+      // `udfu01 12,d0 ... setlb/lne` loop copying the fixed id descriptor table (runtime 0x7dbc0de0) into the
+      // dial slot RAM 0xa0a5c67c -- with NO board-select branch and NO table pointer (the single-fixed-table
+      // form). Its one caller is the dial-module-init wrapper 0x500f95b2 (`call 0x500fa442; call 0x500f9774,
+      // [d2,d3,a2,a3],72; ret`), as E118/E120's one caller is the UI_IN module init. E122's, which selects a
+      // table by board, does not carry (menu).
+      '0x5014b7c7': { to: '0x500f9774', why: 'the dial init (DIAL_INIT): E113\'s dial module init 0x500f9774, which sets up the dial slots (RAM 0xa0a5c67c) from the fixed id descriptor table at runtime 0x7dbc0de0 with no board select and no table pointer (D) -- byte-for-byte E120\'s verified DIAL_INIT 0x5015d3a6 (table 0x601a8810, slots 0xa1c17b80); its one caller 0x500f95b2 is the dial-module-init wrapper; E122\'s board-selecting form does not carry (menu)' },
       // TICK_INIT (src/lab/display.mjs, the kernel tick timers init H-BOOTTIME runs natively). E143\'s monolithic
       // 0x5003121c (inits channels 138..141 then writes the HW timer block) has no 1:1 place in E113: the E118 family
       // splits the tick init into per-channel functions dispatched by a table, so the cross-build map leaves it

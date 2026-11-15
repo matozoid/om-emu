@@ -384,9 +384,16 @@ export const FAMILIES = {
     // (E118 0x5006bf92, the stores at 0x5006bfb2 and 0x5006bfdf; E120's at 0x5006977a; E122's at 0x50067f1f, which its
     // start does not reach, D). The TV encoder block 0x99100000 (0x502fe38a) and the control word 0x98a00000
     // (0x5030b87a), which only the NTSC and PAL opens write (0x503037a8..0x503037b3), are not stub pages since the lab
-    // opens the built-in EVF (device code 6, docs/model-survey.md finding 35; X: E122's EVF start without them)
+    // opens the built-in EVF (device code 6, docs/model-survey.md finding 35; X: E122's EVF start without them).
+    // The flash controller's register page 0x98d00000 (D): the early storage-init function 0x5000121b writes its
+    // config registers (3 -> 0x98d0015c, 1 -> 0x98d00150, 1 -> 0x98d00160) before calling its sub-inits, reached at
+    // play bring-up; the lab does not model the flash controller (its program page 0x98d01800 is noted at models.mjs
+    // E122 block_save, whose whole path E122 stubs). A stub page keeps the config writes; no flash transfer runs. Its
+    // second register page 0x98d01000 is the flash filesystem interface init+mount (0x50001146, strings "ifInit Error"/
+    // "ifMount Error" at 0x50001252/0x50001266): config writes 0x98d010a8/0x98d0103c/0x98d01018 and a readiness poll on
+    // 0x98d01104 bit 13 (0x50001179 `and 8192`), which stub_presets satisfies so the mount completes.
     stub_pages: [0x9B800000, 0x9B801000, 0x99E20000, 0x98800000, 0x98200000, 0x98300000, 0x98500000, 0x98600000,
-      0x98400000, 0x9BD00000, 0x9BC00000],
+      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000],
     // the serial channels' transmit level word +0x1c (the channel records 0x6011c034 + 0x60 x ch name it at +28, E118
     // D) reads each channel's FIFO depth, its transmitter idle: the driver's byte loop writes +0x18 while +0x1c is not 0
     // (E118 0x5006e24b), and its polled send then waits until +0x1c equals the depth word the channel's init keeps
@@ -394,7 +401,11 @@ export const FAMILIES = {
     // E118's EVF panel takes its command list over channel 2 (0x98500000) at 4 MHz in that polled mode, a GPIO pin
     // around each command (0x502d3b20.., D): a stub page's unwritten 0 kept that wait from ending (trap 7 at the
     // display run's limit, X). That +0x1c counts the transmitter's free entries is I
-    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64]],
+    // internal-flash filesystem mount readiness: the ifInit/ifMount run (0x5000121b) polls bit 13 (0x2000) of the flash
+    // controller's status word 0x98d01104 until set (E118 0x50001171 first check, then the setlb..leq loop at 0x50001179
+    // `and 8192`), then masks bits 12..13 (and 12288) and writes them back. The stub page returns 0, so the poll never
+    // ends (trap 7, X); preset the status word with bit 13 set so the mount completes, matching a ready controller.
+    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0x2000]],
     // the display waits' stand-ins: without them E122's display start blocks, every task waiting (X)
     display_wait_stand_ins: true,
     // the SD host (see FAMILIES.E143): one port, 0x99000000, whose DMA wrapper, SD core (+0x2000) and PHY (+0x6000)

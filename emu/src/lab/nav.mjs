@@ -4,7 +4,7 @@
 // WAIT_SLICE_MS, which check_nav rebinds for a session, are live bindings with setters here (setNavPri,
 // setWaitSliceMs). screenshot writes through env.writeOutputs (PNG and zlib live in
 // checks/lib/png.mjs, so src/ stays Worker-safe); the session's out directory is a relative path the writer resolves.
-import { A, ON_LAB_MODEL } from '../fw/model.mjs';
+import { A, ON_LAB_MODEL, MODEL_INFO } from '../fw/model.mjs';
 import * as D from './display.mjs';
 import * as K from './kernel.mjs';
 import * as MM from './menu.mjs';
@@ -18,7 +18,13 @@ import { pack, bytesHex } from '../util/bytes.mjs';
 import { hexDigits as fx } from '../util/hex.mjs';
 import { Tally } from '../util/tally.mjs';
 
-export let NAV_PRI = 50;
+// NAV_PRI: the priority the nav/home task raises itself to for the nav phase (chg_pri TSK_SELF below), so the lab
+// drives sendEvent while the GUI stays preempted. E143's 128-level kernel takes 50 (just above the home task's 60).
+// A tight kernel rejects it: E113 configures only 16 levels (firmware tasks 1..13, the lab's home task at lab_pri 14),
+// so acre/chg_pri refuse 50 with E_PAR (-17). MODEL_INFO.nav_pri pins a valid value there (E113: 14, = lab_pri, the
+// configuration check_nav's pri60 mutant already exercises: equal priority keeps the GUI from preempting while the
+// firmware tasks at 1..13 still run to settle each post). Default stays 50 for the roomy kernels.
+export let NAV_PRI = MODEL_INFO.nav_pri ?? 50;
 export const POST_HOOKS = 140, STEP_HOOKS = 40000, STORM = 810;
 export const WAIT_STORM_PER_MS = 0.4, WAIT_HOOKS_PER_MS = 9;
 export let WAIT_SLICE_MS = 10000;

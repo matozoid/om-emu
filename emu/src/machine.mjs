@@ -160,7 +160,7 @@ export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 10
     read: (a, w, dbg) => { const off = a - ISC; if (w !== 1 || (off % ISC_STRIDE)) unknown('isc', 'read', ISC, off, w, 0, dbg); return isc[off / ISC_STRIDE]; },
     write: (a, v, w, dbg) => { const off = a - ISC; if (w !== 1 || (off % ISC_STRIDE)) unknown('isc', 'write', ISC, off, w, v, dbg); isc[off / ISC_STRIDE] = v; } } });
   const lclock = new Clock();
-  const bus = new Bus(m, boardKnows('bus_ram') ? BOARD.bus_ram : []);
+  const bus = new Bus(m, boardKnows('bus_ram') ? BOARD.bus_ram : [], boardKnows('buswin_pads'));
   bus.onRemap = windowRemapped;                // the decode slots of window pcs, the main-loop return (interp.mjs)
   const intc = new Intc(m);
   const scpu = new Scpu(m, lclock, intc, SCPU_DOORBELL);

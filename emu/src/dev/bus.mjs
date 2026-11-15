@@ -19,9 +19,14 @@ const WINREG = 0x98100000, WINREG_OFF = 0x58, WINREG_RESET = 0x17161514, WINDOW 
 const SEGMENT = 2 ** 27, PAGE = 0x10000;
 const hex8 = (v) => (v >>> 0).toString(16).padStart(8, '0');
 export class Bus {
-  constructor(machine = null, extra = []) {
+  constructor(machine = null, extra = [], pads = false) {
     this.m = machine;
     this.winreg = WINREG_RESET;
+    // the 0x98100000 block is a GPIO/pad-control register bank; on a board whose firmware does read-modify-write on its
+    // pad registers (models.mjs board buswin_pads, the E118 family's flash-library pad setup at offsets 0x00/0x04/0x08/
+    // 0x10), back every offset other than the window-control 0x58 as a scratch register file (reset 0, width 1/2/4) so
+    // the RMW reads back its own writes. Off the board, a non-0x58 access stays an unmodelled bus error (the tripwire).
+    this.pads = pads ? new Uint8Array(0x1000) : null;
     this.base = [BUS_DRAM, LV[0][0], LV[1][0]];
     this.size = [DRAM_SIZE, LV[0][1] - LV[0][0], LV[1][1] - LV[1][0]];
     // board-given extra backed bus ranges (above DRAM, below 4 GiB), RAM allocated lazily like the LV banks: a model
@@ -47,12 +52,20 @@ export class Bus {
     throw BUS;
   }
   winregRead(off, size, dbg) {
-    if (size !== 4 || off !== WINREG_OFF) this.unknown('read', off, size, 0, dbg);
+    if (off !== WINREG_OFF) {
+      if (this.pads && off >= 0 && off + size <= 0x1000) { let v = 0; for (let i = 0; i < size; i++) v |= this.pads[off + i] << (8 * i); return v >>> 0; }
+      this.unknown('read', off, size, 0, dbg);
+    }
+    if (size !== 4) this.unknown('read', off, size, 0, dbg);
     return this.winreg;
   }
   winregWrite(off, value, size, dbg) {
     if (dbg) throw BUS;
-    if (size !== 4 || off !== WINREG_OFF) this.unknown('write', off, size, value, dbg);
+    if (off !== WINREG_OFF) {
+      if (this.pads && off >= 0 && off + size <= 0x1000) { for (let i = 0; i < size; i++) this.pads[off + i] = (value >>> (8 * i)) & 0xff; return; }
+      this.unknown('write', off, size, value, dbg);
+    }
+    if (size !== 4) this.unknown('write', off, size, value, dbg);
     if ((value & 0xFFFFFF) !== (WINREG_RESET & 0xFFFFFF)) this.unknown('write', off, size, value, dbg, ' (bytes 0..2 other than 14 15 16)');
     const seg = this.winreg >>> 24;
     this.winreg = value >>> 0;

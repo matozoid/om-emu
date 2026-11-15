@@ -90,6 +90,12 @@ export const TOUCH_REGS = fact('touch_regs', null) ?? null;
 // data or buffer is a0 on both
 export function tpLength(lab, r, which) {
   const at = fact(`touch_args.${which}_len`, TOUCH_ARGS_E143[`${which}_len`]);
+  // { const: N }: fixed byte count. Some bodies (E118 family) use a touch-reg read
+  // helper that copies a CONSTANT number of bytes to the caller's dest, rather than a
+  // register- or stack-passed length. touchArgs() mis-measures that as { reg: "a1" }
+  // (a1 holds the internal I2C bus count, not the dest length), which overruns the
+  // caller's small dest buffer. See docs/om-emu/e113-touch-read-const.md.
+  if (at.const != null) return at.const & 0xFFFF;
   return at.reg ? r[at.reg] & 0xFFFF : u16(lab.sim.read(r.sp + at.sp, 2), 0);
 }
 // a touch I2C read's register address: the low bytes of the registers that hold it, the high first (fact

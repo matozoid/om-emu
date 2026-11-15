@@ -117,8 +117,11 @@ export const TSND_SITES = fact('rtos.tsnd_sites', [0x5002C187, 0x5002C1F1, 0x500
   0x5100B880, 0x518013FA, 0x5180A529, 0x518919FA]);
 export const DISPQ_SEND_RETURN = A(0x503EBA07), DISPQ_REPLY_RETURNS = [A(0x501C4913), A(0x501C4974)], APP_QUEUE = 6;
 // S-DISPQ's sends: E143's, the display manager's request (its lab list); a ported model's, every asynchronous DISPLAY
-// request of its build too (fact dispq.sends, src/fw/facts.mjs displaySends: E137's cmd 19 after about 5 s of idle)
-export const DISPQ_SEND_RETURNS = [DISPQ_SEND_RETURN, ...fact('dispq.sends', [])];
+// request of its build too (fact dispq.sends, src/fw/facts.mjs displaySends: E137's cmd 19 after about 5 s of idle).
+// DISPQ_SEND_RETURN is E143's own display-manager request site; a build that reorganised that code has no analogue of
+// it (E113: the cross-build map leaves 0x503EBA07 unplaced, and E113's complete async-send set is the measured
+// dispq.sends), so it is dropped when unmapped rather than failing the 7-byte-call check below on a 0xfe sentinel.
+export const DISPQ_SEND_RETURNS = [...(isUnmapped(DISPQ_SEND_RETURN) ? [] : [DISPQ_SEND_RETURN]), ...fact('dispq.sends', [])];
 // S-DISPQ's queue (src/lab/dispq.mjs, docs/hle-gaps.md 4.1.9): the synchronous send's own post, OlyQeWr(target,
 // {msg, 16}, -1) at 0x5002e40c (a 5-byte call) with msg {its reply queue, get_tid's id, cmd, param}, after which it
 // waits for the reply on that queue (OlyQeRd(queue, -1) at 0x5002e422) and deletes it (0x5002bfec), D: the send's own
