@@ -1448,6 +1448,19 @@ export const MODELS = {
     // places PANEL_FLAG at the wrong analogue for E113's reorganised display build. E143/E120 keep PANEL_FLAG (no key).
     // timer_sleep: see the S-TIMERSLEEP note just below.
     display: { timer_sleep: 0x50219e36, panel_flag: 0x7d9b056e },
+    // touch_args.write_len (src/lab/display.mjs tpLength, _i2c_write): the stack slot the touch I2C write takes its
+    // data-byte count from. read_len/read_addr are measured by src/fw/facts.mjs touchArgs (ports.mjs FACTS[E113] =
+    // {read_len:{const:4}, read_addr:['d1']}, the fixed-count read the const-copy detector finds); only write_len is
+    // given by hand, so the paths do not collide (src/fw/model.mjs fact()). The write function (TP_I2C_WRITE ->
+    // 0x5022bade = runtime 0x7dbbcafe) loads its length with `mov (152,sp),d2` at 0x7dbbcb4a (disasm 0x5022bb2a) and
+    // copies that many data bytes (`beq` past the copy on 0; the memcpy at 0x47001000) — sp+152 is the caller's u16
+    // length argument above this function's 148-byte frame, exactly the E118-family slot E122's write uses (its
+    // {sp:152}, src/fw/overrides-E122.mjs TP_I2C_WRITE 0x5030c5a9). touchArgs missed it because E113's build loads
+    // the length with a 32-bit `mov (d8,sp),dn` (opcode 0x5a), not the `movhu` (f8/fa bc) its stack-arg scan keys on;
+    // broadening that scan to 0x5a (a common opcode) across all 14 ported bodies is a needless regression risk, so
+    // this one slot is given by hand with its evidence. _i2c_write only reads these bytes to log the I2C trace (no
+    // buffer write), so the value is a trace-fidelity fact, not a crash fix. Measured in E113's own image.
+    touch_args: { write_len: { sp: 152 } },
     // dial (src/lab/menu.mjs dial_init, dialSelect): E113 is the E118-family single-fixed-table form
     // (table_ptr null) — the dial init takes one fixed id table, with no board select and no table
     // pointer to read back, so src/lab/menu.mjs dial_init runs DIAL_INIT alone (the override 0x5014b7c7
