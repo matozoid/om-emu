@@ -5,7 +5,7 @@
 // guard's IMG branch, dump; the module functions test_card, aspect_code, demo_gui and the colour conversions).
 // write_png / write_outputs need zlib and a file system: checks/lib/png.mjs (node), handed to src as env.writeOutputs.
 // Addresses are disassembly notation (0x50000000 + body offset) unless marked run-time.
-import { A, MODEL, MODEL_INFO, IMAGE_BASE, fact, refuseUnmapped } from '../fw/model.mjs';
+import { A, MODEL, MODEL_INFO, IMAGE_BASE, fact, refuseUnmapped, isUnmapped } from '../fw/model.mjs';
 import { BOARD } from '../fw/board.mjs';
 import * as IRQ from './irq.mjs';
 import { OsdLab, OSD_DEFAULTS } from './osd.mjs';
@@ -781,13 +781,18 @@ export class DisplayLab extends OsdLab {
   }
   // Boot step 0x50058959 natively under the H-TIMER guard; returns the guard log [(function, channel, return)].
   software_timer_init() {
-    refuseUnmapped(HW_TIMER_PTR, 'H-TIMER');
-    const ptr = this.sim.u32(HW_TIMER_PTR);
+    // The guard reads the hardware-timer table pointer only where the build keeps one (fact hw_timer
+    // {ptr}); a build whose init walks a fixed table (fact {table}, e.g. E113/E120, 0x7DA62870) has no
+    // pointer to check, and the low-RAM channel registers (actual hardware state) are the guard there.
+    const hw = fact('hw_timer', { ptr: HW_TIMER_PTR });
+    let ptr = 0;
+    if (hw.ptr !== undefined) { refuseUnmapped(hw.ptr, 'H-TIMER'); ptr = this.sim.u32(hw.ptr); }
     const low = new Map();
     const [first, end] = hwTimerChannels();
     for (let ch = first; ch < end; ch++) low.set(ch, u16(this.sim.read(6 * ch + 2, 2), 0));
     if (ptr || [...low.values()].some((v) => v)) {
-      throw new FirmwareError(`H-TIMER: hardware timer table pointer ${h8(HW_TIMER_PTR)} = 0x${ptr.toString(16)}, low-RAM u16 at 6 * ch + 2 = ${show(low)}: the guard needs 0 and 0`);
+      const ptrPart = hw.ptr !== undefined ? `table pointer ${h8(hw.ptr)} = 0x${ptr.toString(16)}, ` : '';
+      throw new FirmwareError(`H-TIMER: hardware timer ${ptrPart}low-RAM u16 at 6 * ch + 2 = ${show(low)}: the guard needs 0 and 0`);
     }
     const log = [], saved = new Map();
     const guard = (fn) => (hle, r) => {
@@ -806,11 +811,19 @@ export class DisplayLab extends OsdLab {
     const program = (fn) => (hle, r) => {
       throw new FirmwareError(`H-TIMER: ${h8(fn)} reached from ${where(r.mdr)}: the software-timer init would program timer hardware`);
     };
+    // The guard/stop hooks sit on E143's hardware-timer sub-functions. A fixed-table build restructures
+    // that code, so those E143 addresses do not place (unmapped); skip the ones that did not. guards_armed
+    // records whether the return guards could be installed, so the "no calls" check below is only applied
+    // where it can mean something.
+    let guards_armed = 0;
     for (const fn of HW_TIMER_GUARD_RETURNS.keys()) {
+      if (isUnmapped(fn)) continue;
       saved.set(runtime(fn), this.hooks.get(runtime(fn)) ?? null);
       this.hook(fn, guard(fn), 'H-TIMER guard', true);
+      guards_armed++;
     }
     for (const fn of HW_TIMER_PROGRAM) {
+      if (isUnmapped(fn)) continue;
       saved.set(runtime(fn), this.hooks.get(runtime(fn)) ?? null);
       this.hook(fn, program(fn), 'H-TIMER stop');
     }
@@ -830,7 +843,7 @@ export class DisplayLab extends OsdLab {
     if (this.kernel.errors.length > err0) problems.push(`error log ${show(this.kernel.errors.slice(err0).map((e) => hex(e[0])))}`);
     const bad = log.filter(([fn, ch, rv]) => rv !== HW_TIMER_GUARD_RETURNS.get(fn) || !inRange(ch, hwTimerChannels()))
       .map(([fn, ch, rv]) => [h8(fn), ch, rv]);
-    if (bad.length || !log.length) {
+    if (bad.length || (guards_armed && !log.length)) {
       const want = [...HW_TIMER_GUARD_RETURNS].map(([k, v]) => `${show(hex(k))}: ${show(hex(v))}`).join(', ');
       problems.push(`hardware-timer calls (function, channel, return) ${bad.length ? show(bad) : 'none'}, expected {${want}}`);
     }
