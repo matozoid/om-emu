@@ -5,7 +5,7 @@
 // guard's IMG branch, dump; the module functions test_card, aspect_code, demo_gui and the colour conversions).
 // write_png / write_outputs need zlib and a file system: checks/lib/png.mjs (node), handed to src as env.writeOutputs.
 // Addresses are disassembly notation (0x50000000 + body offset) unless marked run-time.
-import { A, MODEL, MODEL_INFO, IMAGE_BASE, fact, refuseUnmapped, isUnmapped } from '../fw/model.mjs';
+import { A, MODEL, MODEL_INFO, IMAGE_BASE, fact, refuseUnmapped } from '../fw/model.mjs';
 import { BOARD } from '../fw/board.mjs';
 import * as IRQ from './irq.mjs';
 import { OsdLab, OSD_DEFAULTS } from './osd.mjs';
@@ -781,18 +781,46 @@ export class DisplayLab extends OsdLab {
   }
   // Boot step 0x50058959 natively under the H-TIMER guard; returns the guard log [(function, channel, return)].
   software_timer_init() {
-    // The guard reads the hardware-timer table pointer only where the build keeps one (fact hw_timer
-    // {ptr}); a build whose init walks a fixed table (fact {table}, e.g. E113/E120, 0x7DA62870) has no
-    // pointer to check, and the low-RAM channel registers (actual hardware state) are the guard there.
+    // Two hardware-timer forms. Pointer form (E143 golden and its kin): the init keeps the timer table behind a RAM
+    // pointer (fact hw_timer {ptr}); the init is interleaved with the hardware-timer sub-functions, so it runs under the
+    // full guard apparatus below (return guards log the HW calls, program guards forbid actually programming HW). Fixed
+    // table / pool form (E113/E120, fact {table} e.g. 0x7DA62870): the software-timer init is a separate pool-based
+    // routine with no such pointer and no call into E143's HW-timer sub-functions, so that apparatus does not apply --
+    // it is run plainly and judged only by its firmware error log.
     const hw = fact('hw_timer', { ptr: HW_TIMER_PTR });
+    const tableForm = hw.ptr === undefined;
     let ptr = 0;
-    if (hw.ptr !== undefined) { refuseUnmapped(hw.ptr, 'H-TIMER'); ptr = this.sim.u32(hw.ptr); }
+    if (!tableForm) { refuseUnmapped(hw.ptr, 'H-TIMER'); ptr = this.sim.u32(hw.ptr); }
     const low = new Map();
     const [first, end] = hwTimerChannels();
     for (let ch = first; ch < end; ch++) low.set(ch, u16(this.sim.read(6 * ch + 2, 2), 0));
     if (ptr || [...low.values()].some((v) => v)) {
-      const ptrPart = hw.ptr !== undefined ? `table pointer ${h8(hw.ptr)} = 0x${ptr.toString(16)}, ` : '';
+      const ptrPart = !tableForm ? `table pointer ${h8(hw.ptr)} = 0x${ptr.toString(16)}, ` : '';
       throw new FirmwareError(`H-TIMER: hardware timer ${ptrPart}low-RAM u16 at 6 * ch + 2 = ${show(low)}: the guard needs 0 and 0`);
+    }
+    // H-SWTIMERPOOL (see boot_time, display.mjs ~904): a build whose software-timer init allocates its timer objects
+    // from a slot pool (free-list bitmap + record table) rather than filling a table inline must have the pool seeded
+    // first, or the acre_tmr create finds no free slot and logs firmware error 0x19001802. The seed (MODEL_INFO
+    // .timer_pool_init.fn, e.g. E113 0x50005a7b) is reached in firmware only through an init-fn table the HLE boot
+    // never iterates, so run it natively here. Idempotent, but guarded so the time-mode boot_time path (which seeds the
+    // same pool) and this menu/nav path never seed twice. E143/E120 fill the timer table inline and define no seed.
+    if (MODEL_INFO.timer_pool_init && !this.timer_pool_seeded) {
+      const { fn, frame } = MODEL_INFO.timer_pool_init;
+      this.step(`H-SWTIMERPOOL software-timer slot pool seed ${h8(fn)}`, () => this.call(fn, null, null, frame, 20000));
+      this.timer_pool_seeded = true;
+    }
+    if (tableForm) {
+      // Fixed-table / pool form: the init's call graph legitimately reads the clock and second timer-unit stub pages
+      // (0x98800000 / 0x9b800000, intentional stubs) and calls none of E143's HW-timer guard functions, so the E143
+      // stub/guard/log checks do not apply. Judge it only by its firmware error log.
+      const err0 = this.kernel.errors.length;
+      this.step('software timer init 0x50058959 (boot step, table form; the hardware timer init is separate)',
+        () => this.call(TIMER_INIT, null, null, null, 20000));
+      if (this.kernel.errors.length > err0) {
+        throw new FirmwareError('H-TIMER: error log ' + show(this.kernel.errors.slice(err0).map((e) => hex(e[0]))));
+      }
+      this.timer_log = [];
+      return this.timer_log;
     }
     const log = [], saved = new Map();
     const guard = (fn) => (hle, r) => {
@@ -811,19 +839,11 @@ export class DisplayLab extends OsdLab {
     const program = (fn) => (hle, r) => {
       throw new FirmwareError(`H-TIMER: ${h8(fn)} reached from ${where(r.mdr)}: the software-timer init would program timer hardware`);
     };
-    // The guard/stop hooks sit on E143's hardware-timer sub-functions. A fixed-table build restructures
-    // that code, so those E143 addresses do not place (unmapped); skip the ones that did not. guards_armed
-    // records whether the return guards could be installed, so the "no calls" check below is only applied
-    // where it can mean something.
-    let guards_armed = 0;
     for (const fn of HW_TIMER_GUARD_RETURNS.keys()) {
-      if (isUnmapped(fn)) continue;
       saved.set(runtime(fn), this.hooks.get(runtime(fn)) ?? null);
       this.hook(fn, guard(fn), 'H-TIMER guard', true);
-      guards_armed++;
     }
     for (const fn of HW_TIMER_PROGRAM) {
-      if (isUnmapped(fn)) continue;
       saved.set(runtime(fn), this.hooks.get(runtime(fn)) ?? null);
       this.hook(fn, program(fn), 'H-TIMER stop');
     }
@@ -843,7 +863,7 @@ export class DisplayLab extends OsdLab {
     if (this.kernel.errors.length > err0) problems.push(`error log ${show(this.kernel.errors.slice(err0).map((e) => hex(e[0])))}`);
     const bad = log.filter(([fn, ch, rv]) => rv !== HW_TIMER_GUARD_RETURNS.get(fn) || !inRange(ch, hwTimerChannels()))
       .map(([fn, ch, rv]) => [h8(fn), ch, rv]);
-    if (bad.length || (guards_armed && !log.length)) {
+    if (bad.length || !log.length) {
       const want = [...HW_TIMER_GUARD_RETURNS].map(([k, v]) => `${show(hex(k))}: ${show(hex(v))}`).join(', ');
       problems.push(`hardware-timer calls (function, channel, return) ${bad.length ? show(bad) : 'none'}, expected {${want}}`);
     }
@@ -910,9 +930,10 @@ export class DisplayLab extends OsdLab {
     // |= 0x7fff / 0x3f, records at 0xa0a55c7c set free) by 0x50005ab9, reached only through the timer-module init
     // 0x50005a7b, which the firmware runs off an init-fn table (ptr at 0x500d1dac) the HLE boot never iterates. Run it
     // natively here, before TIMER_INIT. E143/E120 fill the timer table inline (no pool) and define no seed.
-    if (MODEL_INFO.timer_pool_init) {
+    if (MODEL_INFO.timer_pool_init && !this.timer_pool_seeded) {
       const { fn, frame } = MODEL_INFO.timer_pool_init;
       this.step(`H-SWTIMERPOOL software-timer slot pool seed ${h8(fn)}`, () => this.call(fn, null, null, frame, 20000));
+      this.timer_pool_seeded = true;
     }
     run('H-BOOTTIME software timer init 0x50058959 (boot call 0x5002cd82)', TIMER_INIT);
     // a board whose software-timer init starts no channel of its own (timer.soft_tick null, src/fw/board.mjs) has
