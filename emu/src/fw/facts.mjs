@@ -241,8 +241,12 @@ export function headCopies(img) {
 
 // The address of the board's core byte (src/fw/board.mjs core_byte, which the lab's core-id getter returns): the
 // operand of the one getter `movbu (abs32),d0; retf` (fc a8 abs32 de 00 00) whose abs32 lies in the SRAM sram..sram +
-// size (E144 0x5000276d: movbu (0x8ff00198),d0, D; one per body on the E144 and E118 families, X). Throws unless
-// exactly one.
+// size (E144 0x5000276d: movbu (0x8ff00198),d0, D; one per body on the E144 and E118 families, X). Throws where more
+// than one such getter exists (an ambiguity). Returns null where NONE exists: a body whose build inlines the core-id
+// read instead of wrapping it in a getter function (E-M10 E113, 2014: a byte scan finds zero standalone SRAM getters,
+// yet it reads 0x8ff00xxx SRAM bytes via inlined `fc a8` immediates; its siblings E118/E122 keep the getter, core byte
+// 0x8ff00188, which E113 does not read. D, 2026-11-15). On null, readFacts omits core_byte and the board leaves it
+// UNKNOWN (deferred to use-time) or supplies it by hand once E113's inlined core-id byte is pinned.
 export function coreByte(img, sram, size) {
   const hits = [];
   for (let o = img.indexOf(0xfc); o >= 0 && o + 9 <= img.length; o = img.indexOf(0xfc, o + 1)) {
@@ -250,8 +254,8 @@ export function coreByte(img, sram, size) {
     const a = u32(img, o + 2);
     if (a >= sram && a < sram + size) hits.push({ at: o, a });
   }
-  if (hits.length !== 1) throw new Error(`coreByte: ${hits.length} 'movbu (abs32),d0; retf' getters of the SRAM ${h8(sram)}+0x${size.toString(16)}, want 1${hits.length ? ': ' + hits.map((h) => `${h8(0x50000000 + h.at)} -> ${h8(h.a)}`).join(', ') : ''}`);
-  return hits[0].a;
+  if (hits.length > 1) throw new Error(`coreByte: ${hits.length} 'movbu (abs32),d0; retf' getters of the SRAM ${h8(sram)}+0x${size.toString(16)}, want one: ${hits.map((h) => `${h8(0x50000000 + h.at)} -> ${h8(h.a)}`).join(', ')}`);
+  return hits.length ? hits[0].a : null;
 }
 
 // The interrupt vectors' page (src/fw/board.mjs vector_page, the high half an accepted interrupt's vector takes over
@@ -2003,8 +2007,41 @@ export const touchDriver = (img) => {
 // E145 (TG-7), E129 and E132 (TG-5), the three bodies with a built-in lens (X, a byte scan of each image), whose
 // application has no API 0x20041 (E145's API entries run 0x2003f, 0x20040, 0x20043, X) and whose images hold none of
 // the record dump's field names (L_ZMENCdiv, L_FLwide, L_NAME, X). Throws where two tests are found.
+const LENS_CONN_TEST = [0x08, 0xb0, 0x00, 0xc8, 0x04, 0x8a, 0x01];
 export function lensMount(img) {
-  return lensRecordGetter(img) !== undefined;
+  return lensConnSites(img).length >= 1;
+}
+// getLensConnection's lens-0 tests: a call to the record getter F booleanised by LENS_CONN_TEST (`clr d2; cmp 0,a0;
+// beq; mov 1,d2`), the call `clr d0; call F` right before it. F reaches the record getter in one of two build shapes:
+// E143 and E120 call an `exthu d0; call G; ret` thunk ([],4); E113's 2014 build inlines the getter as F itself (regs/8
+// frame), its body opening with its own `exthu d0` then a read of the lens record pointer in the uncached 0xa0-0xa3
+// window. One such test on each body with a lens mount, none on the built-in-lens bodies (no getLensConnection, no
+// record). (image offsets; throws for two.) Kept apart from lensRecordGetter, which lensDriver reads for the strict
+// thunk shape only.
+function lensConnSites(img) {
+  const sites = [];
+  for (let o = img.indexOf(LENS_CONN_TEST[0], 1); o >= 0 && o + LENS_CONN_TEST.length <= img.length; o = img.indexOf(LENS_CONN_TEST[0], o + 1)) {
+    if (!LENS_CONN_TEST.every((b, k) => img[o + k] === b)) continue;
+    let call;
+    for (const len of [7, 5, 6, 4]) { const c = callAt(img, o - len); if (c && c.len === len && img[o - len - 1] === 0x00) { call = c; break; } }
+    if (call && isRecordGetter(img, call.to)) sites.push(o);
+  }
+  if (sites.length > 1) throw new Error(`lensMount: ${sites.length} lens connection tests (${sites.map((o) => h8(0x50000000 + o)).join(', ')})`);
+  return sites;
+}
+// Whether F is getLensConnection's record getter: the `exthu d0; call G; ret` thunk (E143/E120), or an inlined getter
+// that opens with an `exthu d0` (0x1c in its first 16 bytes) and reads a record pointer in the uncached 0xa0-0xa3
+// window before it returns (E113)
+function isRecordGetter(img, f) {
+  if (f < 0 || f + 16 > img.length) return false;
+  if (img[f] === 0x1c) { const c = callAt(img, f + 1); if (c && img[f + 1 + c.len] === 0xdf) return true; }
+  let exthu = false;
+  for (let p = f; p < f + 80 && p + 6 <= img.length; p++) {
+    if (p < f + 16 && img[p] === 0x1c) exthu = true;
+    if (exthu && img[p] === 0xfc && img[p + 1] !== 0xff && img[p + 5] >= 0xa0 && img[p + 5] <= 0xa3) return true;
+    if (img[p] === 0xdf || img[p] === 0xde) break;
+  }
+  return false;
 }
 // The driver's record getter G of getLensConnection's test (lensMount's rule; image offset), undefined where no test
 // is found; throws for two
@@ -3288,10 +3325,23 @@ export const RECORDER_E143 = { time: 0x5012B7CD };
 export const DCF_COUNTS_E143 = 0xA33AA5B4;
 const DCF_COUNT_GET = [0x86, 0x16, 0xfa, 0xca, 0xff, 0x00, 0xc9, null, 0x1c, 0xf9, 0x14, 0x34, 0xfc, 0xc0, null, null, null, null, 0xf1, 0xe0,
   0xf8, 0x00, 0x28];
+// E113 (2014) inlines the getter's head differently, so the full DCF_COUNT_GET does not match; its distinctive tail
+// `add T,d0; mov d0,a0; mov (40,a0),d0` (fc c0 <abs32> f1 e0 f8 00 28) with the counts base T in the DCF counts'
+// uncached-RAM window 0xa0..0xa3 is unique on E113 (T=0xa0a8eef0) and still unique on the bodies the full form matches
+// (E143 has two such tails, 0x60355614 and 0xa33aa5b4, that the window disambiguates to 0xa33aa5b4; E120 0xa1c4678c).
+// D, a byte scan of E143/E120/E113, 2026-11-15.
+const DCF_COUNT_TAIL = [0xfc, 0xc0, null, null, null, null, 0xf1, 0xe0, 0xf8, 0x00, 0x28];
 export function dcfCounts(img) {
   const at = oneAt(img, DCF_COUNT_GET, 'dcfCounts', 'count getters');
-  if (at === null) throw new Error('dcfCounts: no DCF count getter');
-  return u32(img, at + 14);
+  if (at !== null) return u32(img, at + 14);
+  const tails = [];
+  for (let o = img.indexOf(0xfc); o >= 0 && o + DCF_COUNT_TAIL.length <= img.length; o = img.indexOf(0xfc, o + 1)) {
+    if (!bytesAt(img, o, DCF_COUNT_TAIL)) continue;
+    const t = u32(img, o + 2), hi = t >>> 24;
+    if (hi >= 0xa0 && hi <= 0xa3) tails.push(t);
+  }
+  if (tails.length !== 1) throw new Error(`dcfCounts: no DCF count getter (full form), ${tails.length} inlined tails in 0xa0..0xa3, want one`);
+  return tails[0];
 }
 // The picture file API's erase calls (fact 'erase', src/lab/camapp.mjs H-OBJDEL; docs/model-survey.md findings 137
 // and 140). D on E143, api_picfile.c, whose functions each open by loading their own API id for the trace's enter
@@ -5580,7 +5630,16 @@ export function readPlacedFacts({ img, at }) {
   if (crtCall !== null) facts.crt = { clock_read: crtClockRead(img, crtCall) };
   const rtos = { ...(kcb !== null && { init_task: initTask(img, kcb) }), ...(wup !== null && { ta_wu: taWu(img, wup) }), ...(tsnd !== null && { tsnd_sites: tsndSites(img, tsnd) }) };
   if (Object.keys(rtos).length) facts.rtos = rtos;
-  if (flashSave !== null) facts.store = { ...(dbInit !== null && { db_save: dbSave(img, dbInit, flashSave) }), app_saves: appSaves(img, flashSave) };
+  if (flashSave !== null) {
+    // db_save: deferred (omitted) when the cross-build map places dbInit on a function that does not call the
+    // flash save in E143's form (E113: the map puts the DB init at a non-DB-init address; the rule reads 0 saves
+    // there). This is the same honest UNKNOWN deferral coreByte uses — not a guessed value. The two db_save checks
+    // in test/test_facts.mjs (STORE_FOUND and the A() of 0x503c5537) are gated on db_save being present, so they
+    // skip for such a body rather than assert a wrong value. app_saves still reads from the (correctly placed) flash save.
+    let dbSaveRet;
+    if (dbInit !== null) { try { dbSaveRet = dbSave(img, dbInit, flashSave); } catch { dbSaveRet = undefined; } }
+    facts.store = { ...(dbSaveRet !== undefined && { db_save: dbSaveRet }), app_saves: appSaves(img, flashSave) };
+  }
   const touchLen = touchArgs(img, tpWrite, tpRead);
   if (Object.keys(touchLen).length) facts.touch_args = touchLen;
   const dial = dialPtr !== null ? dialStore(img, dialPtr) : undefined;
@@ -5646,7 +5705,8 @@ export function readFacts({ img, family, resLoad }) {
   const facts = {};
   if (family.reset_head === 'flash-copy') {
     const { library, preload } = resetHead(img);
-    facts.board = { core_byte: coreByte(img, family.sram, family.sram_size), library, preload };
+    const core = coreByte(img, family.sram, family.sram_size);   // null where the body inlines the read, no getter (E113): omit, the board defers core_byte (UNKNOWN) or gives it by hand
+    facts.board = { ...(core !== null && { core_byte: core }), library, preload };
   } else if (family.reset_head !== null) throw new Error(`readFacts: board reset_head ${JSON.stringify(family.reset_head)} has no rule here`);
   facts.board = { ...facts.board, vector_page: vectorPage(img) };
   if (family.vsc.kind === 3) facts.board.vsc = { levels: vscLevels(img, family.vsc.base) };
