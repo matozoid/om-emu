@@ -1351,6 +1351,36 @@ export const MODELS = {
       '0x5002e68f': { to: '0x5004c56a', why: 'LEVEL_HANDLERS[5]: the kernel\'s level-handler table kcb[88] after its init holds 0x5004c56a (X); the leg map put levels 2 and 3 on level 1\'s handler and levels 4 and 5 one handler late (irq)' },
     },
   },
+  // E-M10 Mark I (2014, TruePic VII), firmware 1.4. Local RE project (em10_1) port attempt. PRE-dates all three
+  // board families (E143/E144/E118 are 2015-2022), so no port_via sibling; board facts to be supplied by hand from the
+  // em10_1 Ghidra RE (runtime base 0x7d991020, verified 2315/3000 strings). image_base is that base (reset head jumps
+  // into the relocated copy). This is a minimal entry to measure the cross-build map's placement from E143; overrides
+  // are empty until the port report shows what fails.
+  E113: {
+    name: 'E-M10', bin: 'OLY_E_113_1400_0000_0000.BIN', version: '1.4', res_block: 'blk01200000.OE.0101.bin', checked: false,
+    rom_len: 18874304, rom_sha256: 'e2b227662d782a2c75c6c6e872bc34fdfa45d34a9b1b2cee04a4435a00c54f0e',
+    image_base: 0x7d991020,
+    res_len: 25165760, res_sha256: '6f4f15acebbcd6513f9e9fe6afea8bd3e1b839896f5a7d44f34838b8ab46fa9d',
+    // rear LCD 3.0" 1.037M dots; EVF (VF-4-class) ~1.44M dots
+    panels: { tft: [720, 480], evf: [800, 600] },
+    card_fs: {
+      native: false,
+      // the cross-build map does not place E113's file-system seams: src/fw/facts.mjs fileSystem reads none of them,
+      // so FACTS[E113] carries no `storage` and the lab has nothing to drive a native card FS with. S-CARD keeps the
+      // card without one (src/lab/camapp.mjs), pending E113 storage RE (the E118 family's forms, read in E122's code).
+      why: 'E113 file-system seams not placed by the cross-build map (no storage fact); card kept without a native FS',
+      hls: 'rule',
+    },
+    rec_native: false,
+    board: { family: 'E118' },
+    // EVF device code + output-device property id, measured from E113's own image: its single EVF-writer
+    // (`mov (abs32),d0; cmp 6,d0; bne; mov 4014,d0; mov 8,d1`) names propId 4014 and EVF code 6, identical to
+    // E120 (same E118 family). The cross-build map leaves E143's PROP_DEVICE_SITES null, so the facts.mjs
+    // propDevice/evfCode rules emit no `prop` for E113; supplied by hand here with that measurement.
+    prop: { device: 4014, evf_code: 6 },
+    g4set: G4SET_UNCHECKED,
+    overrides: {},
+  },
 };
 export const codeOf = (m) => 'E' + m.bin.slice(6, 9);
 export const romPath = (m) => `unpacked/${codeOf(m)}/${m.bin}.blk00000000.OE.0100.bin`;

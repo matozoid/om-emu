@@ -270,7 +270,7 @@ const SYNC_FOUND = { E137: { request: 0x502BD2D2, image_sync: 0x502BD5BC, sync_s
 // Whether a kind-3 VSC body's code names the OSD level words (board.vsc.levels; D: E122's open stores 0x100 to them at
 // 0x503097ba..0x503097c6, E120's at 0x502d6c9c..; E118's open 0x502e1b48 stores none and no word of its image holds
 // their addresses) and the bodies of another VSC kind, which have no such fact
-const LEVELS_FOUND = { E122: true, E120: true, E118: false };
+const LEVELS_FOUND = { E122: true, E120: true, E118: false, E113: false };
 // The module-9 state readers (app.module9_readers) as src/fw/models.mjs gave them by hand before the rule (E144, E139:
 // D, each call checked), and E143's lab lists, which E143's readers must hold (src/lab/camapp.mjs CA_MODULE9_READERS,
 // src/lab/menu.mjs TAKEOVER_READERS)
@@ -715,7 +715,7 @@ const ERRLOG_FOUND = {
   E143: 0x50047313, E146: 0x50047F1A, E147: 0x50047A34, E144: 0x50041D51, E139: 0x50043A9F, E134: 0x500453BD,
   E137: 0x5003E9A9, E142: 0x500417E8, E140: 0x50041672, E125: 0x50041A17, E145: 0x500407F2, E133: 0x50040112,
   E130: 0x5003FDA7, E129: 0x50040967, E132: 0x50040943, E118: 0x5000318E, E122: 0x50003195, E120: 0x500031B7,
-  E148: 0x500421E7,
+  E148: 0x500421E7, E113: 0x50006AF4,
 };
 // The remaining-shots query (card.shots_query; src/fw/facts.mjs shotsQuery): E143's as the lab gives it
 // (src/lab/camapp.mjs SHOTS_QUERY, D), the places of E143's the maps gave (E146, E147, E144, E139, E134, E137, E125),
@@ -728,7 +728,7 @@ const DETECT_FOUND = {
   E143: [0xA33AF3D4, 2], E146: [0xA33E2088, 2], E147: [0xA33C9C50, 1], E144: [0xA27018B8, 1], E139: [0xA27487C0, 2],
   E134: [0xA290FE74, 2], E137: [0xA2680C10, 1], E142: [0xA2787684, 1], E140: [0xA2785998, 1], E125: [0xA27A10F8, 2],
   E145: [0xA2219288, 1], E133: [0xA2B16D0C, 1], E130: [0xA2B6A660, 1], E129: [0xA2B747D8, 1], E132: [0xA2B74D4C, 1],
-  E118: [0xA1C47794, 1], E122: [0xA1C878DC, 1], E120: [0xA1C46B78, 1], E148: [0xA2750A68, 1],
+  E118: [0xA1C47794, 1], E122: [0xA1C878DC, 1], E120: [0xA1C46B78, 1], E148: [0xA2750A68, 1], E113: [0xA0A8F02C, 1],
 };
 // The second card slot (card.slots; src/fw/facts.mjs cardSlots; docs/hle-gaps.md 4.8.12): E143's as read by hand (D:
 // the SD driver's detect 0x508b0221 with its helper 0x508b0859, the GIO codes 0x0200000f / 0x02000010 through the
@@ -769,7 +769,7 @@ const SHOTS_FOUND = {
   E143: 0x50419164, E146: 0x50414A5F, E147: 0x50422B7E, E144: 0x502FAB48, E139: 0x502F7CEB, E134: 0x50313E2D,
   E137: 0x502EC70F, E142: 0x502C79DB, E140: 0x502D63A0, E125: 0x50307376, E145: 0x502CEB73, E133: 0x502DAB10,
   E130: 0x502E943F, E129: 0x502BB7E3, E132: 0x502BD1C7, E118: 0x502C2877, E122: 0x502E3440, E120: 0x502BD9A9,
-  E148: 0x502FED34,
+  E148: 0x502FED34, E113: 0x502109D0,
 };
 // CPU 0's init task and OlyTaWu (rtos.init_task, rtos.ta_wu; src/fw/facts.mjs initTask, taWu) at the port's places of
 // the kcb and wup_tsk: E143's as the lab gives them (src/lab/kernel.mjs INIT_TASK_ENTRY, src/lab/rtos.mjs; D: the
