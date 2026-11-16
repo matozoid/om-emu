@@ -393,7 +393,13 @@ export const FAMILIES = {
     // "ifMount Error" at 0x50001252/0x50001266): config writes 0x98d010a8/0x98d0103c/0x98d01018 and a readiness poll on
     // 0x98d01104 bit 13 (0x50001179 `and 8192`), which stub_presets satisfies so the mount completes.
     stub_pages: [0x9B800000, 0x9B801000, 0x99E20000, 0x98800000, 0x98200000, 0x98300000, 0x98500000, 0x98600000,
-      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000],
+      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000, 0x98700000],
+    // 0x98700000: a sixth serial-channel block E113's GUI_CREATOR display/CPU init writes and polls (the init at
+    // disasm 0x5003402d, reached 0x50006cbc->0x500002fc on an SRAM scratch stack; X: scratchpad/wallb_bt.mjs). Its
+    // byte-send at 0x5003407e reads +0x00 (RMW `or 256`) and writes 25 to +0x04; its transmit-level poll at 0x50034232
+    // waits +0x1c > 0 through the channel-pointer table at disasm 0x5005F6AC ([0]=0x9870001c, paired with the already-
+    // stubbed 0x98400000 at [1]=0x9840001c). Denied by default, so inert for the other E118-family bodies, which boot
+    // without touching it (X: they would fault on it otherwise). Preset +0x1c like its paired channel so the poll ends.
     // the serial channels' transmit level word +0x1c (the channel records 0x6011c034 + 0x60 x ch name it at +28, E118
     // D) reads each channel's FIFO depth, its transmitter idle: the driver's byte loop writes +0x18 while +0x1c is not 0
     // (E118 0x5006e24b), and its polled send then waits until +0x1c equals the depth word the channel's init keeps
@@ -405,7 +411,7 @@ export const FAMILIES = {
     // controller's status word 0x98d01104 until set (E118 0x50001171 first check, then the setlb..leq loop at 0x50001179
     // `and 8192`), then masks bits 12..13 (and 12288) and writes them back. The stub page returns 0, so the poll never
     // ends (trap 7, X); preset the status word with bit 13 set so the mount completes, matching a ready controller.
-    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0x2000]],
+    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0x2000], [0x9870001C, 64]],
     // the display waits' stand-ins: without them E122's display start blocks, every task waiting (X)
     display_wait_stand_ins: true,
     // the SD host (see FAMILIES.E143): one port, 0x99000000, whose DMA wrapper, SD core (+0x2000) and PHY (+0x6000)
