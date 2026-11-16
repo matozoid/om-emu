@@ -94,6 +94,13 @@ export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 10
   // DRAM_MAX 512 MiB chip by the guard). For every body whose image ends within its managed DRAM (E143, E120,
   // ...) image-end <= dram_size, so this Math.max is a no-op and nothing changes.
   if (rom) dramBytes = Math.max(dramBytes, IMAGE_BASE - 0x60000000 + rom.length);
+  // BOARD.dram_chip (optional): the PHYSICAL DRAM chip size, distinct from dram_size (the firmware's
+  // managed-heap top, a software placement that can sit below the chip top). When the firmware allocates
+  // above its managed heap — E113's CameraCommon registry hands back app objects near the 512 MiB chip top
+  // (~0xBFCxxxxx–0xBFDxxxxx), the E118-family chip being 512 MiB — the lab must map the whole chip or those
+  // accesses fault (fault 2, unbacked). dram_size stays the gui-top fact; this floors the mapping to the chip.
+  // Absent (E143, ... where dram_size already == the chip) this is a no-op.
+  if (BOARD.dram_chip) dramBytes = Math.max(dramBytes, BOARD.dram_chip);
   if (dramBytes > mem.DRAM_MAX || dramBytes < 64 << 20) throw new Error(`om-emu: DRAM must be 64..${mem.DRAM_MAX >> 20} MiB`);
   const myGen = ++generation;
   const tCreate = clock();

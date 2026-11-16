@@ -1415,7 +1415,19 @@ export const MODELS = {
     // 0x7d9962c0. Admit E113's format by hand; E120/E122 keep the strict check. (The fill's pixel math stays 1 B/px,
     // which is exact for E113's black surface-clears on lazily-zeroed DRAM; a full 4bpp model is pending non-black
     // draws.) bit22's exact field meaning on E113 is not yet pinned -- see docs/mods/related-projects.md Wall 3.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true } },
+    // dram_chip (src/machine.mjs): E113's PHYSICAL DRAM chip is 512 MiB, distinct from dram_size (the derived
+    // gui-managed-heap top, 0x1d971200 ~= 474 MiB — a software placement below the chip top on this body). The
+    // E118-family chip is 512 MiB (facts.mjs dramSize comment: E118/E120 GUIs end at 0xc0000000); E120/E122 place
+    // their GUI at the chip top so dram_size == 512 MiB already, but E113 places it lower. E113's CameraCommon
+    // registry (method 0x5069e3dd, kind=2 get-or-create) returns app objects in physical DRAM above the heap top:
+    // the second registry call at 0x509af704 returns a2=0xbfd2a000, and 0x509af730 `mov (a2),d0` faults (fault 2)
+    // when only ~491 MiB (image-end) is mapped. Mapping the full 512 MiB chip backs 0xbfd2a000 and clears the fault
+    // (boot then advances to the H-UIIN divu-by-zero at 0x7d9962c0, the separate engine/geometry wall). Matches the
+    // documented E130 precedent (facts.mjs dramSize comment: 384 MiB faulted at 0xbfc59440, "runs on with 512 MiB").
+    // This supersedes the earlier (disproven) 0x501d59fc / display-cmd-12 theory: that path is never reached on the
+    // faulting trace (probe wallc_order: 0x502140cc/0x501d59fc not hit before the 0x509af730 fault). dram_size, the
+    // heap-top fact, is unchanged (273/273 facts hold); only the lab's physical mapping grows.
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true }, dram_chip: 512 << 20 },
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one
