@@ -115,14 +115,30 @@ export class NativeKernel {
       this.breaks.push([s32(r.d0), where(r.mdr)]);
       throw new FirmwareError(`kernel break(${s32(r.d0)}) from ${where(r.mdr)}`);
     };
-    const xcpu = (h, r) => {
+    // Wall F/G stand-in (MODEL_INFO.xcpu_standin): one CPU in the lab, so the firmware's inter-CPU rendezvous never
+    // completes. The doorbell post (XCPU_WAIT 0x500127cb) targets a core the lab does not run, and the IPI barrier
+    // (xcpu_standin.barriers, e.g. E113 0x500125a3) sets its own ready bit in 0x8ff00000 then spins until the halfword
+    // reads (1<<coreCount)-1 -- bits the absent cores never set (fault=7 deadman). Return from each as its own `ret`
+    // would, as if every core had synced: finish() for the direct-called post, finish_calls() for the vtable-dispatched
+    // barrier. The other cores' side effects are skipped -- a documented E113 stand-in that surfaces the next wall
+    // rather than hanging (docs/om-emu/e113-boot-walls.md Walls F/G). Models without the fact keep the hard stop.
+    const xcpuReturn = (label) => (h, r) => {
+      this.skipped.push([label, where(r.mdr)]);
+      try { h.finish(r); } catch (e) { if (!(e instanceof FirmwareError)) throw e; h.finish_calls(r); }
+    };
+    const xcpuStop = (h, r) => {
       throw new FirmwareError(`inter-CPU handshake with CPU ${r.d0} (0x5001258b) from ${where(r.mdr)}: only one CPU in the lab`);
     };
     const defaultHandler = (h, r) => {
       throw new FirmwareError(`IRQ presented with no handler attached: default handler 0x${fx(IRQ.DEFAULT_HANDLER, 8)} called from ${where(r.mdr)}; presented now ${show(this.intc.present_now())}`);
     };
     this.hle.hook(KBREAK, kbreak, 'kbreak');
-    this.hle.hook(XCPU_WAIT, xcpu, 'xcpu_wait');
+    if (MODEL_INFO.xcpu_standin) {
+      this.hle.hook(XCPU_WAIT, xcpuReturn('K-XCPU-wait'), 'xcpu_wait');
+      for (const a of (MODEL_INFO.xcpu_standin.barriers ?? [])) this.hle.hook(A(a), xcpuReturn('K-XCPU-barrier'), 'xcpu_barrier');
+    } else {
+      this.hle.hook(XCPU_WAIT, xcpuStop, 'xcpu_wait');
+    }
     if (this.irq === 'native') this.hle.hook(IRQ.DEFAULT_HANDLER, defaultHandler, 'irq_default');
   }
   svc(name, regs = null, stack = null, limit = 5000) {

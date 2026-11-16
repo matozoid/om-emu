@@ -1450,6 +1450,15 @@ export const MODELS = {
       [0x60000030, 0x40060000, 4], [0x60000034, 0x40060000, 4],
       [0x60000040, 0x40060000, 4], [0x6000005c, 0x40060000, 4],
     ],
+    // xcpu_standin (src/lab/kernel.mjs install_guards): E113 is a 3-core SoC; its menu bring-up performs real inter-CPU
+    // rendezvous the one-CPU lab cannot complete. Two primitives on the path: XCPU_WAIT (0x500127cb = this model's
+    // A(0x5001258b)), an inter-core doorbell post/wait to an absent core (direct-called, returned via finish()); and the
+    // IPI barrier (barriers: 0x500125a3, vtable-dispatched via perCPU+304..), which sets its own ready bit in the
+    // 0x8ff00000 halfword then spins until it reads (1<<coreCount)-1 -- bits the absent cores never set, a fault=7
+    // deadman. With this fact each returns cleanly (as its own `ret` would), as if every core had synced -- a documented
+    // stand-in (the other cores' side effects are skipped, surfacing the next wall). docs/om-emu/e113-boot-walls.md
+    // Walls F/G. Other models keep the hard stop.
+    xcpu_standin: { barriers: [0x500125a3] },
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one
