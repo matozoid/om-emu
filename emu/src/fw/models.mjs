@@ -1427,7 +1427,29 @@ export const MODELS = {
     // This supersedes the earlier (disproven) 0x501d59fc / display-cmd-12 theory: that path is never reached on the
     // faulting trace (probe wallc_order: 0x502140cc/0x501d59fc not hit before the 0x509af730 fault). dram_size, the
     // heap-top fact, is unchanged (273/273 facts hold); only the lab's physical mapping grows.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true }, dram_chip: 512 << 20 },
+    // display_planes (src/machine.mjs): a RAM window inside the firmware's framebuffer aperture 0x40060000..0x40690000
+    // (the range 0x500d65d2's reg_buffer validator accepts). E113's display-buffer allocator runs on a register-indirect
+    // path the lab does not drive, so the 0x60000000 display-buffer struct is never populated and DISPLAY-OPEN's plane
+    // reads (reg_buffer at 0x5003a448/0x5003a460/0x5003a4e5, deref at 0x5003a4b8) hit NULL -> range-validator hang at
+    // 0x500d675a (Wall E). boot_seeds below points the struct's plane fields here; backing the target with real RAM lets
+    // the range-check and derefs pass. STAND-IN: one flat window, not the real multi-plane layout; no byte-match to HW.
+    // E113-only (E120/E122 share the E118 board but drive the allocator). docs/om-emu/e113-boot-walls.md Wall E.
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 } },
+    // boot_seeds (src/lab/menu.mjs bring_up H-E113SEED): [addr, value, width] the lab writes to DRAM before the firmware
+    // runs, standing in for native init blocks the lab does not drive. Each is a documented E113 stand-in, NOT a HW
+    // byte-match -- see docs/om-emu/e113-boot-walls.md. E113-only (no other model defines boot_seeds).
+    //   Wall B: 0x6055f944 = serial-flash geometry config halfword the native flash-config block computes; the divu at
+    //     0x7d9962c0 (H-UIIN OSD geometry) divides by it, so 0 -> divide-by-zero. 0x800 derived from E113 lab geometry.
+    //   Wall E: 0x60000014/18/30/34/40/5c = the 0x60000000 display-buffer struct's framebuffer-plane pointers, all set
+    //     to the display_planes window base. The tft DISPLAY-OPEN path reads them as plane addresses (reg_buffer at
+    //     0x5003a448/0x5003a460/0x5003a4e5, plane-base at 0x5003a491, deref at 0x5003a4b8); unpopulated -> NULL -> the
+    //     0x500d65d2 range-validator hangs at 0x500d675a. Backing + seeding clears the hang; OPEN completes.
+    boot_seeds: [
+      [0x6055f944, 0x800, 2],
+      [0x60000014, 0x40060000, 4], [0x60000018, 0x40060000, 4],
+      [0x60000030, 0x40060000, 4], [0x60000034, 0x40060000, 4],
+      [0x60000040, 0x40060000, 4], [0x6000005c, 0x40060000, 4],
+    ],
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one

@@ -249,6 +249,15 @@ export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 10
     const { base, size } = BOARD.scratch;
     addRegion({ base, size, kind: K_RAM, off: allocWindow(size), name: 'om1.lab-scratch' });
   }
+  // the display-buffer plane aperture stand-in (src/fw/board.mjs display_planes): a RAM window inside one of the
+  // firmware's framebuffer apertures (0x40060000.., validated by 0x500d65d2). E113's display-buffer allocator runs
+  // register-indirect on a path the lab does not drive, so the 0x60000000 display-buffer struct's plane pointers are
+  // seeded (menu.mjs bring_up H-DISPBUF) to point here; backing them with real RAM lets DISPLAY-OPEN's reg_buffer
+  // range-check and its buffer derefs (e.g. 0x5003a4b8) succeed. Absent on other bodies -> no-op (docs/om-emu/e113-boot-walls.md Wall E)
+  if (BOARD.display_planes) {
+    const { base, size } = BOARD.display_planes;
+    addRegion({ base, size, kind: K_RAM, off: allocWindow(size), name: `om1.display-planes-${base.toString(16)}` });
+  }
 
   let gen = myGen;
   const live = () => { if (gen !== generation) throw gen === -1 ? new Aborted() : new Error('machine replaced by a newer createMachine()'); };

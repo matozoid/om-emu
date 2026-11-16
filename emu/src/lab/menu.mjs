@@ -474,7 +474,19 @@ export class MenuLab extends T.TextDisplayLab {
     }
     this.start();
     if (before_open) before_open();
+    this.seed_boot();
     this.open(device);
+  }
+  // H-E113SEED: write MODEL_INFO.boot_seeds ([addr, value, width]) to DRAM after display start() has run its native init
+  // (which zeroes the 0x60000000 display-buffer struct) and before DISPLAY-OPEN reads the framebuffer-plane pointers.
+  // Each is a documented E113 stand-in for a native init block the lab does not drive, NOT a HW byte-match -- see
+  // src/fw/models.mjs boot_seeds and docs/om-emu/e113-boot-walls.md. No-op on models that define no boot_seeds (E143 golden).
+  seed_boot() {
+    for (const [addr, value, width] of (MODEL_INFO.boot_seeds ?? [])) {
+      const b = new Uint8Array(width);
+      for (let i = 0; i < width; i++) b[i] = (value >>> (8 * i)) & 0xff;
+      this.sim.write(addr, b);
+    }
   }
   bring_up(device = 'tft') {
     if (this.evf_layout && device !== 'evf') throw new ValueError('evf_layout: the EVF layout inputs apply to the EVF only');
