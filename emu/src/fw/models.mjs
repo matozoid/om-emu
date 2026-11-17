@@ -1464,6 +1464,18 @@ export const MODELS = {
     // stand-in (the other cores' side effects are skipped, surfacing the next wall). docs/om-emu/e113-boot-walls.md
     // Walls F/G. Other models keep the hard stop.
     xcpu_standin: { barriers: [0x500125a3] },
+    // idle_block (src/lab/kernel.mjs boot, after init): E113's kernel idles through a per-CPU-control-block
+    // indirection E143 lacks. The idle-start gate (fn 0x7d9a2b65 / disasm 0x50011b45) reads block field[360]
+    // (idle-ready): if !=1 it wires dispatch to the panic self-loop 0x7d9a730b (bra .); if ==1 it calls
+    // 0x7d9a7310, which does `mov (308,a0),a0; calls (a0)` -- jumps through field[308] (the idle-dispatcher
+    // ptr). CPU0's block = *(table) = 0x7d9b0930 (an image address); its static field[360]=0 and field[308]=
+    // 0x7d9edcc9 (a retf sled) are never overwritten in the lab, so the firmware panics at the idle gate during
+    // device bring-up (the kernel-init IDLE hooks that mask this are temporary, src/lab/kernel.mjs:88). E143
+    // instead reaches the harness idle trampoline IDLE_DONE via the INTC gate (kernel.mjs set_gate), with no
+    // such block. This fact bridges E113's indirection to IDLE_DONE: after init the lab sets CPU0 block
+    // field[ready]=1 and field[dispatch]=IDLE_DONE, so the firmware's idle dispatch lands on the lab's idle
+    // home. docs/om-emu/e113-menu-port.md FINDING 2026-11-17f..h. Other models have no such block.
+    idle_block: { table: 0x8ff00004, ready: 360, dispatch: 308 },
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one

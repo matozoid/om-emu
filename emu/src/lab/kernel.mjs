@@ -95,6 +95,15 @@ export class NativeKernel {
     }
     hle.hooks = saved;
     this.install_guards();
+    // E113 per-CPU idle-block init (MODEL_INFO.idle_block): bridge the firmware's idle-dispatch indirection to
+    // the harness idle home. CPU0's block = *(table); field[ready]=1 (gate takes the idle arm, not the panic
+    // self-loop) and field[dispatch]=IDLE_DONE (the `calls (a0)` lands on the lab's trampoline). Models without
+    // the fact (E143 reaches IDLE_DONE via the INTC gate) are untouched. docs/om-emu/e113-menu-port.md 17f..h.
+    if (MODEL_INFO.idle_block) {
+      const ib = MODEL_INFO.idle_block, block = sim.u32(ib.table) >>> 0;
+      sim.word((block + ib.ready) >>> 0, 1);
+      sim.word((block + ib.dispatch) >>> 0, IDLE_DONE);
+    }
     const cur = sim.u32(this.kcb(96));
     if (cur !== this.kcb(100)) throw new FirmwareError(`after init kcb[96] -> 0x${fx(cur, 8)}, idle TCB 0x${fx(this.kcb(100), 8)}`);
     if (irq === 'native') {
