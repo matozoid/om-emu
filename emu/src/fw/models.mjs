@@ -1434,7 +1434,12 @@ export const MODELS = {
     // 0x500d675a (Wall E). boot_seeds below points the struct's plane fields here; backing the target with real RAM lets
     // the range-check and derefs pass. STAND-IN: one flat window, not the real multi-plane layout; no byte-match to HW.
     // E113-only (E120/E122 share the E118 board but drive the allocator). docs/om-emu/e113-boot-walls.md Wall E.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 } },
+    // scpu.storage override (Wall H grind): E113's SCPU-init fn 0x5004a3e0 (task 0x50038e2f chain) reads the port word
+    // 0x98e000a0 (RMW `or d1`, disasm 0x5004a40c) which E118's compacted storage map [0x00,0x94] omits (events:null, so
+    // no port block) -> scpu.read throws BUS (fault 2). Back 0xa0 as plain storage so the RMW reads back what it writes.
+    // STAND-IN: one port word as storage, not the SCPU event-port/level semantics (E143-family's events at 0xa0..0xb8
+    // can't be grafted -- E118 puts its clock at 0x98, colliding with that family's events.pending). E113-only.
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 }, scpu: { storage: [[0x00, 0x94], [0xa0, 0xa0]] } },
     // boot_seeds (src/lab/menu.mjs bring_up H-E113SEED): [addr, value, width] the lab writes to DRAM before the firmware
     // runs, standing in for native init blocks the lab does not drive. Each is a documented E113 stand-in, NOT a HW
     // byte-match -- see docs/om-emu/e113-boot-walls.md. E113-only (no other model defines boot_seeds).
@@ -1542,7 +1547,19 @@ export const MODELS = {
     // -1240,sp; ...`), and its entry pointer (runtime 0x7dbad84c) is referenced once, from the static task table at
     // image offset 0x191a8 (disasm 0x500191a8), exactly the E118-family form E120 uses (its row 0x51). Started by the
     // display task init step (X: boot reaches the start of it from display.mjs:944).
-    extra_tasks: [0x5021c82c],
+    // The nine that follow 0x5021c82c are the E113 start-up task chain, measured by grinding the kernel native (the
+    // grind driver appends each "start firmware task entry 0x..." throw to this list and retries, src/lab/kernel.mjs
+    // allow Set). In start order: 0x50031c0c, 0x50032ed8, 0x50038e2f (3-channel periph enable + 0x99700000 reg zero-
+    // init + SCPU 0x98e000a0 port), 0x50053c58 (0x98c00000 device-register write + 0x98C00004 busy-bit poll),
+    // 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5. With all nine allowed and the Wall-H HW stand-ins
+    // backed (board.mjs stub_pages 0x98000000/0x99700000/0x98c00000, stub_preset [0x98C00004,0]=busy-done, scpu 0xa0),
+    // the kernel runs them all to a block and drops into its OWN idle loop 0x500162eb (`bra .`), reached from the
+    // scheduler at disasm 0x50011b9a when perCPU[cpu].field[360] (ready count, table 0x8FF00004) != 1 -- i.e. every
+    // start-up task has initialised and blocked waiting for an event/IRQ. That idle is distinct from the lab's own
+    // idle (kernel.mjs IDLE 0x500159F3/F8); the lab does not yet drive 0x500162eb, so bring-up spins there (fault 7).
+    // This is the "event-loop tasks need real modelling" boundary: next step is teaching the lab idle-step/IRQ
+    // delivery at 0x500162eb, not another HW stub. See docs/om-emu/e113-boot-walls.md (Wall H / kernel-idle).
+    extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5],
     // disp_sync_init (src/lab/display.mjs start): E143's display-sync module is absent from the E118 family (as E120,
     // its evidence there). Measured: the "disp_sync_work" trace string E143 carries (3 occurrences) is absent from
     // E113's image (0 occurrences, same as E120), so there is no disp_sync init to run and A(0x507f2fe0) has no place.

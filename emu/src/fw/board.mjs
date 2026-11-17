@@ -393,7 +393,18 @@ export const FAMILIES = {
     // "ifMount Error" at 0x50001252/0x50001266): config writes 0x98d010a8/0x98d0103c/0x98d01018 and a readiness poll on
     // 0x98d01104 bit 13 (0x50001179 `and 8192`), which stub_presets satisfies so the mount completes.
     stub_pages: [0x9B800000, 0x9B801000, 0x99E20000, 0x98800000, 0x98200000, 0x98300000, 0x98500000, 0x98600000,
-      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000, 0x98700000],
+      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000, 0x98700000, 0x98000000, 0x99700000, 0x98c00000],
+    // 0x98c00000: a device register E113's kernel task-startup chain (Wall H grind, task 0x50053c58 -> fn near 0x50046ced)
+    // writes 0x100 to (+0x00) after a DRAM status check (0xa0a537a8 bit 15). Unbacked -> fault 2 (X: scratchpad/wf_grind.mjs).
+    // A stub page keeps the enable write; no further modelled effect.
+    // 0x99700000: a register block E113's kernel task-startup chain (Wall H grind, task 0x50038e2f -> fn 0x5004bd82)
+    // zero-inits: after a `call 0x5005a9ec(d0=53, d1=1)` it writes 0 to +0x00/04/10/14/18/1c. Unbacked -> fault 2 on the
+    // first write (X: scratchpad/wf_grind.mjs). A stub page keeps the clear writes; the block has no further modelled effect.
+    // 0x98000000: a 3-channel peripheral control/enable block E113's kernel task-startup chain (Wall H grind, the task
+    // 0x50038e2f -> ... -> device-init fn 0x500496e9) brings up: the init registers handler 0x5004974b for channels 0/1/2
+    // (three calls to 0x50052b8b with a1=0/1/2, then three to 0x50052bd0 with d1=0/1/2), then enables the block by setting
+    // bit 8 at +0x00 (RMW `mov (a0),d0; or 256,d0; mov d0,(a0)`, disasm 0x50049736) and writing mask 0xff to +0x04. Unbacked
+    // -> fault 2 (X: scratchpad/wf_grind.mjs). A stub page keeps the enable writes; the block has no further modelled effect.
     // 0x98700000: a sixth serial-channel block E113's GUI_CREATOR display/CPU init writes and polls (the init at
     // disasm 0x5003402d, reached 0x50006cbc->0x500002fc on an SRAM scratch stack; X: scratchpad/wallb_bt.mjs). Its
     // byte-send at 0x5003407e reads +0x00 (RMW `or 256`) and writes 25 to +0x04; its transmit-level poll at 0x50034232
@@ -411,7 +422,12 @@ export const FAMILIES = {
     // controller's status word 0x98d01104 until set (E118 0x50001171 first check, then the setlb..leq loop at 0x50001179
     // `and 8192`), then masks bits 12..13 (and 12288) and writes them back. The stub page returns 0, so the poll never
     // ends (trap 7, X); preset the status word with bit 13 set so the mount completes, matching a ready controller.
-    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0x2000], [0x9870001C, 64]],
+    // 0x98C00004 = 0 (Wall H grind): the device at the 0x98c00000 stub page sets +0x04 bit0 = busy/pending; E113's task
+    // 0x50053c58 chain (fn near 0x50046ced -> poll at disasm 0x50047265 `setlb; mov (a0),d0; btst 1; lne`) spins until it
+    // clears, which real HW does on op-complete. The stub keeps the written 1 (read 14.2M x 0x1 -> fault 7, X:
+    // scratchpad/trace_98c.mjs). A preset returning 0 makes the busy bit read "done" so the wait ends immediately. Inert
+    // for other E118 bodies (they do not touch the 0x98c00000 block). STAND-IN: instant completion, no real device timing.
+    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0x2000], [0x9870001C, 64], [0x98C00004, 0]],
     // the display waits' stand-ins: without them E122's display start blocks, every task waiting (X)
     display_wait_stand_ins: true,
     // the SD host (see FAMILIES.E143): one port, 0x99000000, whose DMA wrapper, SD core (+0x2000) and PHY (+0x6000)
