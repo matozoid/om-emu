@@ -1476,6 +1476,21 @@ export const MODELS = {
     // field[ready]=1 and field[dispatch]=IDLE_DONE, so the firmware's idle dispatch lands on the lab's idle
     // home. docs/om-emu/e113-menu-port.md FINDING 2026-11-17f..h. Other models have no such block.
     idle_block: { table: 0x8ff00004, ready: 360, dispatch: 308 },
+    // settle_slp / settle_iwup (src/lab/kernel.mjs settle/elapse_until): E113's genuine display-open
+    // ("DISPLAY cmd 2 OPEN tft") runs a kernel object-pool restore (fn 0x50012167 / runtime 0x7d9a3187,
+    // reached entirely through kernel frames 0x50011xxx/0x50012xxx during normal task dispatch -- NOT via
+    // the idle trampoline, confirmed by stack unwind) that reinitialises the semaphore control-block array,
+    // destroying the lab's dynamically-created settle_sem mid-wait. A sem-based park cannot survive this:
+    // the sem object is gone (isig_sem -> -42 E_NOEXS) and the lab task is orphaned (the restore cleared the
+    // sem's wait queue, so re-create + sig will not relink it; rel_wai is not ISR-callable). Instead E113
+    // parks the lab task on slp_tsk (TCB-intrinsic sleep, no object to destroy -- the TCB survives the
+    // restore) and wakes it with the interrupt-callable iwup_tsk. Addresses measured in E113's own image
+    // (symbol-map.md): slp_tsk = runtime 0x7d9a6a16 = disasm 0x500159f6 (no id arg; checks the wake-up count
+    // at task-node +21, else knl_sleep_enter(kind=1), returns wake code at node +64); iwup_tsk = runtime
+    // 0x7d9a24d4 = disasm 0x500114b4 (knl_iwup_tsk, interrupt-context wake of a slp_tsk sleeper, deferred
+    // dispatch). E143 and the other models leave these unset and keep the acre_sem/isig_sem park (their
+    // display-open does not reinit the sem pool). docs/om-emu/e113-menu-port.md.
+    settle_slp: 0x500159f6, settle_iwup: 0x500114b4,
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one
@@ -1579,7 +1594,12 @@ export const MODELS = {
     // semaphore-pool reinit (isig_sem -> E_NOEXS; docs/om-emu/e113-menu-port.md FINDING 2026-11-17i). E143 unaffected
     // (extra_tasks is per-model; its display-open does not reinit the pool).
     extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5,
-      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7],
+      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7,
+      // 0x500f95cc: a device-worker task act_tsk'd during display-open (TFT bring-up). Its body (runtime 0x7da8a5ec)
+      // is a phase state machine driving global 0x606b7f94 through 0,1,2,3 and parking on OlyQe event-flag 0x7d9b0510
+      // (twai 0x7d9c1138, pattern 3). It is allowed to run natively and park in that wait; the menu does not depend on
+      // its completion. First reached once the settle wall (slp/iwup re-register) was cleared. docs/om-emu/e113-menu-port.md.
+      0x500f95cc],
     // disp_sync_init (src/lab/display.mjs start): E143's display-sync module is absent from the E118 family (as E120,
     // its evidence there). Measured: the "disp_sync_work" trace string E143 carries (3 occurrences) is absent from
     // E113's image (0 occurrences, same as E120), so there is no disp_sync init to run and A(0x507f2fe0) has no place.

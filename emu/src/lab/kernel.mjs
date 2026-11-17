@@ -27,7 +27,7 @@ export const SVC = {
   acre_dtq: A(0x5000F3BB), del_dtq: A(0x50010129), tsnd_dtq: A(0x50016578), trcv_dtq: A(0x5001625E),
   sns_ctx: A(0x50017B6A),
 };
-export const E_OK = 0, E_QOVR = -43, E_TMOUT = -50, E_CTX = -25;
+export const E_OK = 0, E_QOVR = -43, E_TMOUT = -50, E_CTX = -25, E_NOEXS = -42, E_RLWAI = -49;
 export const TTS = { 1: 'RUN', 2: 'RDY', 4: 'WAI', 8: 'SUS', 0xC: 'WAS', 0x10: 'DMT' };
 export const TCB_STATE = 12, TCB_ID = 16, TCB_SP = 24, TCB_TMO_NODE = 28, TCB_CTSK = 68;
 
@@ -195,7 +195,7 @@ export class LabTask {
     this.allow = new Set([...allow_tasks, ...(MODEL_INFO.extra_tasks ?? [])]);
     this.tid = null; this.idle_events = []; this.on_idle = null; this.started = [];
     this.patch_tasks = [];              // H-PATCHTASK: the entries (disassembly notation) of the tasks a patch made
-    this.settle_sem = null; this.settling = false; this.settle_log = []; this._settle_current = null;
+    this.settle_sem = null; this.settling = false; this.settle_log = []; this._settle_current = null; this._settle_sem_dead = false;
     this._irq_open = false; this.native_opens = 0; this._accepted_seen = 0;
     this.strict_levels = true; this.time_mode = false; this.elapse_log = []; this.idle_again_limit = 1000;
     // the devices beside the CPU that move on at the idle point (src/lab/scpulink.mjs, the sub-CPU; src/lab/power.mjs,
@@ -337,8 +337,36 @@ export class LabTask {
     this.settle_sem = rc;
     return rc;
   }
-  settle(deliver, pending, limit = 200000) {
+  // The settle rendezvous parks the lab task so the firmware tasks run, then wakes it once the firmware has
+  // quiesced. Two mechanisms: the default acre_sem/isig_sem (a dynamically-created semaphore the lab signals),
+  // and -- when MODEL_INFO.settle_slp is set (E113) -- slp_tsk/iwup_tsk. E113's display-open reinitialises the
+  // kernel semaphore pool mid-command, which would destroy a settle semaphore; slp_tsk parks on the TCB itself
+  // (no object to destroy) and the interrupt-callable iwup_tsk wakes it. See MODEL_INFO.settle_slp.
+  _settle_wake(lt) {
+    if (MODEL_INFO.settle_slp) {
+      let rc = in_interrupt(lt, () => isr_call(lt, MODEL_INFO.settle_iwup, { d0: this.tid }));
+      if (rc === E_NOEXS) {
+        // E113's display-open runs a generic kernel object-pool restore that re-registers only the firmware's
+        // static objects, DE-REGISTERING the lab's dynamically-created task (it zeroes TCB+16, the id-registration
+        // field, so iwup_tsk returns E_NOEXS). The slp_tsk sleep itself is queue-less -- it lives entirely in the
+        // parked TCB's state/wakeup-count, which the restore leaves intact -- so re-asserting the registration
+        // field (TCB+16 = tid) is enough to make the task wakeable again. Then retry iwup_tsk.
+        const tcb = this.nk.tcb(this.tid);
+        this.hle.sim.write(tcb + 16, new Uint8Array([this.tid & 0xFF, (this.tid >> 8) & 0xFF]));
+        rc = in_interrupt(lt, () => isr_call(lt, MODEL_INFO.settle_iwup, { d0: this.tid }));
+      }
+      return rc;
+    }
     if (this.settle_sem === null) this.make_settle_sem();
+    return in_interrupt(lt, () => isr_call(lt, SVC.isig_sem, { d0: this.settle_sem }));
+  }
+  _settle_park(limit) {
+    if (MODEL_INFO.settle_slp) return s32(this.hle.call(MODEL_INFO.settle_slp, {}, null, null, limit).d0);
+    if (this.settle_sem === null) this.make_settle_sem();
+    const [rc] = this.nk.svc('twai_sem', { d0: this.settle_sem, d1: 0xFFFFFFFF }, null, limit);
+    return rc;
+  }
+  settle(deliver, pending, limit = 200000) {
     const log = [];
     const onIdle = (lt) => {
       if (pending()) { in_interrupt(lt, deliver); log.push('irq'); return true; }
@@ -347,9 +375,9 @@ export class LabTask {
       else if (timed.length) {
         throw new FirmwareError(`settle: task(s) ${show(timed)} in a timed wait (${show(timed.map((t) => hex(this.nk.entry(t))))}): time model needed`);
       }
-      const rc = in_interrupt(lt, () => isr_call(lt, SVC.isig_sem, { d0: this.settle_sem }));
-      if (rc === E_QOVR) throw new FirmwareError('settle: isig_sem E_QOVR: the lab task is blocked elsewhere');
-      if (rc !== E_OK) throw new FirmwareError(`settle: isig_sem = ${rc}`);
+      const rc = this._settle_wake(lt);
+      if (rc === E_QOVR) throw new FirmwareError('settle: wake E_QOVR: the lab task is blocked elsewhere');
+      if (rc !== E_OK) throw new FirmwareError(`settle: wake = ${rc}`);
       log.push('signal');
       return true;
     };
@@ -358,9 +386,9 @@ export class LabTask {
     this._settle_current = log;
     if (this.nk.intc !== null) this._accepted_seen = this.nk.intc.u32(IRQ.D_ACCEPTED_TOTAL);
     let rc;
-    try { [rc] = this.nk.svc('twai_sem', { d0: this.settle_sem, d1: 0xFFFFFFFF }, null, limit); }
+    try { rc = this._settle_park(limit); }
     finally { this.on_idle = previous; this.settling = false; this._settle_current = null; }
-    if (rc !== E_OK) throw new FirmwareError(`settle: twai_sem = ${rc}`);
+    if (rc !== E_OK) throw new FirmwareError(`settle: park = ${rc}`);
     this.settle_log.push(log);
     return log;
   }
