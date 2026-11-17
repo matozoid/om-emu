@@ -298,7 +298,12 @@ export class LabTask {
           if (this._irq_open) {
             throw new FirmwareError(`presented IRQ not accepted at IDLE_DONE: presented ${show(intc.present_now())}, PSW 0x${fx(r.psw, 4)}, gate ${show(intc.gate())}`);
           }
-          if ((mask & (mask - 1)) && this.strict_levels) {
+          // A-INTC-ORDER: more than one interrupt level presented at once. Without a declared priority order the
+          // lab refuses to pick (strict_levels). A model whose INTC follows the native controller's order (a lower
+          // level number is higher priority, src/dev/intc.mjs irqLevel) sets MODEL_INFO.intc_native_order, and the
+          // idle point proceeds -- the native model delivers the lowest presented level first, the rest at the
+          // following idle points. See MODEL_INFO.intc_native_order (E113).
+          if ((mask & (mask - 1)) && this.strict_levels && !MODEL_INFO.intc_native_order) {
             throw new FirmwareError(`two interrupt levels presented together at the idle point: ${show(intc.present_now())} (A-INTC-ORDER and the level priority would decide)`);
           }
           this._irq_open = true;

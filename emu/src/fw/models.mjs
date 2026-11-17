@@ -1491,6 +1491,21 @@ export const MODELS = {
     // dispatch). E143 and the other models leave these unset and keep the acre_sem/isig_sem park (their
     // display-open does not reinit the sem pool). docs/om-emu/e113-menu-port.md.
     settle_slp: 0x500159f6, settle_iwup: 0x500114b4,
+    // intc_native_order (src/lab/kernel.mjs _idle, A-INTC-ORDER): E113's GUI bring-up is long (~17 s of guest
+    // instructions on this host), so by the time the lab task parks and the firmware quiesces, two device IRQ
+    // lines stand asserted together at the idle point -- measured: irq 31 at level 3 and irq 30 at level 5 (both
+    // real, firmware-attached: handlers 0x7d9dd92c / 0x7d9dd8f0, generic per-IRQ trampolines into the central
+    // dispatcher 0x7d9e3bfb; both lines driven=set at the stop). The lab's default idle guard refuses to proceed
+    // when more than one interrupt LEVEL is presented at once (strict_levels), because without a declared priority
+    // order it cannot know which the CPU takes first. E113's INTC (AM33 GxICR) is the standard form: a lower level
+    // NUMBER is higher priority, which is exactly what the native controller model already resolves to
+    // (src/dev/intc.mjs irqLevel: `mask & -mask`, the lowest set level). So the order is not ambiguous for E113 --
+    // it is the native model's order -- and the idle point delivers irq 31 (level 3) first, then irq 30 (level 5)
+    // at the next idle, each ISR clearing its line (verified: with the guard lifted bring-up advances cleanly past
+    // this point to the next task-start wall, not a re-presentation loop). This fact asserts that order and lets
+    // _idle proceed instead of throwing. E143 never presents coincident levels in its checks (shorter settle), so
+    // it keeps the strict guard (no key) -- the change is E113-gated and leaves the golden untouched.
+    intc_native_order: true,
     // cflush_returns (src/lab/menu.mjs _k_cflush): extra call sites from which the firmware may invoke the kernel
     // cache-flush K_CFLUSH (A(0x5004E68A)). The lab models cache-flush as a no-op (emulator memory is coherent) but
     // asserts the caller is a known site, to catch an unexpected flush that might rely on cache semantics. The one
