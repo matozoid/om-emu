@@ -393,7 +393,11 @@ export const FAMILIES = {
     // "ifMount Error" at 0x50001252/0x50001266): config writes 0x98d010a8/0x98d0103c/0x98d01018 and a readiness poll on
     // 0x98d01104 bit 13 (0x50001179 `and 8192`), which stub_presets satisfies so the mount completes.
     stub_pages: [0x9B800000, 0x9B801000, 0x99E20000, 0x98800000, 0x98200000, 0x98300000, 0x98500000, 0x98600000,
-      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000, 0x98700000, 0x98000000, 0x99700000, 0x98c00000],
+      0x98400000, 0x9BD00000, 0x9BC00000, 0x98D00000, 0x98D01000, 0x98700000, 0x98000000, 0x99700000, 0x98c00000,
+      0x9BF00000, 0x9BB00000],
+    // 0x9BF00000 / 0x9BB00000: lens-comm (SSC) hardware register blocks that E113's lens-unit reset
+    // (fn 0x7dac122c, "reset 3 lens units" on the no-lens path) clears to 0 — writes +0x00/+0x68 (0x9bf*)
+    // and +0x00/+0x04 (0x9bb*) at 0x7dac1255.. before call 0x7dac27e5. Plain reset targets: absorb, read 0.
     // 0x98c00000: a device register E113's kernel task-startup chain (Wall H grind, task 0x50053c58 -> fn near 0x50046ced)
     // writes 0x100 to (+0x00) after a DRAM status check (0xa0a537a8 bit 15). Unbacked -> fault 2 (X: scratchpad/wf_grind.mjs).
     // A stub page keeps the enable write; no further modelled effect.
