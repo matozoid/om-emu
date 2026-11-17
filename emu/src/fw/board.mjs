@@ -422,12 +422,21 @@ export const FAMILIES = {
     // controller's status word 0x98d01104 until set (E118 0x50001171 first check, then the setlb..leq loop at 0x50001179
     // `and 8192`), then masks bits 12..13 (and 12288) and writes them back. The stub page returns 0, so the poll never
     // ends (trap 7, X); preset the status word with bit 13 set so the mount completes, matching a ready controller.
+    // The same status word 0x98d01104 is also the flash read/write done-poll in E113's GUI bring-up: the poll helper at
+    // disasm 0x50001726 (called from 0x50003d18, the "read before writing" path 0x50003d39) waits until
+    // `(0x98d01104 & 0x9004) == 0x9004` (bits 15,12,2), up to 65535 tries, else prints "[FLASH]intr status0 BIT" (2107611520)
+    // and aborts -> WinMain del_tsk's its own task, GUI dies, scheduler reaches firmware idle 0x7d9a730b (trap 7, X:
+    // scratchpad/pollmask.mjs captured mask d0=0x9004). A preset read returns the value regardless of the mount's
+    // write-back, so widening it to 0x2000 | 0x9004 = 0xB004 satisfies BOTH the bit-13 mount poll and the 0x9004 flash
+    // done-poll, setting only the bits the two polls want. Inert for E120/E122 (they stub their whole flash path) and
+    // for E118 (its mount reads bit 13 only; the extra bits are a ready/done status it never samples). STAND-IN:
+    // instant flash completion, no real controller timing.
     // 0x98C00004 = 0 (Wall H grind): the device at the 0x98c00000 stub page sets +0x04 bit0 = busy/pending; E113's task
     // 0x50053c58 chain (fn near 0x50046ced -> poll at disasm 0x50047265 `setlb; mov (a0),d0; btst 1; lne`) spins until it
     // clears, which real HW does on op-complete. The stub keeps the written 1 (read 14.2M x 0x1 -> fault 7, X:
     // scratchpad/trace_98c.mjs). A preset returning 0 makes the busy bit read "done" so the wait ends immediately. Inert
     // for other E118 bodies (they do not touch the 0x98c00000 block). STAND-IN: instant completion, no real device timing.
-    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0x2000], [0x9870001C, 64], [0x98C00004, 0]],
+    stub_presets: [[0x9820001C, 16], [0x9830001C, 16], [0x9850001C, 16], [0x9860001C, 16], [0x9840001C, 64], [0x98D01104, 0xB004], [0x9870001C, 64], [0x98C00004, 0]],
     // the display waits' stand-ins: without them E122's display start blocks, every task waiting (X)
     display_wait_stand_ins: true,
     // the SD host (see FAMILIES.E143): one port, 0x99000000, whose DMA wrapper, SD core (+0x2000) and PHY (+0x6000)
