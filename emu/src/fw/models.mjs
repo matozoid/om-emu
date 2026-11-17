@@ -1569,9 +1569,17 @@ export const MODELS = {
     // scheduler at disasm 0x50011b9a when perCPU[cpu].field[360] (ready count, table 0x8FF00004) != 1 -- i.e. every
     // start-up task has initialised and blocked waiting for an event/IRQ. That idle is distinct from the lab's own
     // idle (kernel.mjs IDLE 0x500159F3/F8); the lab does not yet drive 0x500162eb, so bring-up spins there (fault 7).
-    // This is the "event-loop tasks need real modelling" boundary: next step is teaching the lab idle-step/IRQ
-    // delivery at 0x500162eb, not another HW stub. See docs/om-emu/e113-boot-walls.md (Wall H / kernel-idle).
-    extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5],
+    // This is the "event-loop tasks need real modelling" boundary: the old next step was teaching the lab idle-step/IRQ
+    // delivery at 0x500162eb. See docs/om-emu/e113-boot-walls.md (Wall H / kernel-idle).
+    // UPDATE (idle_block fix, below): with the per-CPU idle block initialised the kernel idle 0x500162eb no longer spins,
+    // and bring_up('tft', time:true) advances into the display-open path, which starts a FURTHER five of the same
+    // start-up/service family (same grind method): 0x500442dc (the "QPWRSTANDBY" power-standby task: cre_mbx id 16 then
+    // a TMO_FEVR receive loop), then its cascade 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7. Added so the real
+    // bring-up reaches the true next wall -- the lab's settle_sem (id 112, menu.mjs:290) is deleted by E113's display-open
+    // semaphore-pool reinit (isig_sem -> E_NOEXS; docs/om-emu/e113-menu-port.md FINDING 2026-11-17i). E143 unaffected
+    // (extra_tasks is per-model; its display-open does not reinit the pool).
+    extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5,
+      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7],
     // disp_sync_init (src/lab/display.mjs start): E143's display-sync module is absent from the E118 family (as E120,
     // its evidence there). Measured: the "disp_sync_work" trace string E143 carries (3 occurrences) is absent from
     // E113's image (0 occurrences, same as E120), so there is no disp_sync init to run and A(0x507f2fe0) has no place.
