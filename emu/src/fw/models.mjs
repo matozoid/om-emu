@@ -1608,8 +1608,12 @@ export const MODELS = {
     // bring-up reaches the true next wall -- the lab's settle_sem (id 112, menu.mjs:290) is deleted by E113's display-open
     // semaphore-pool reinit (isig_sem -> E_NOEXS; docs/om-emu/e113-menu-port.md FINDING 2026-11-17i). E143 unaffected
     // (extra_tasks is per-model; its display-open does not reinit the pool).
+    // UPDATE (intc_native_order fix, above): with coincident INTC levels resolved the display-open path runs further
+    // and starts one more of the same service family, 0x5005148d (an event-flag worker: OlyEvWt on flag word
+    // 0x7d9b04a2 via 0x50030118 mode 3, dispatch on the result bits, loop -- no one sets the flag in the lab, so it
+    // parks in WAI). Added so the real bring-up reaches the true next wall. E143 unaffected (per-model).
     extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5,
-      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7],
+      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7, 0x5005148d],
     // stub_tasks (H-STUBTASK, src/lab/kernel.mjs start): the lens/FCS detect worker 0x500f95cc, act_tsk'd by E113's
     // display-open (TFT bring-up), started as an immediate return. Its body (runtime 0x7da8a5ec) is a phase state machine
     // (global 0x606b7f94) whose FIRST act is an init poll loop (0x7da8a5fb) calling detect routine 0x7d9d8915 with a 16 ms
