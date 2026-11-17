@@ -235,6 +235,12 @@ export class LabTask {
     hle.hook(TASK_START, (h, r) => this._task_start(h, r), 'task_start');
     hle.hook_rt(LAB_HOME, (h, r) => this._home(h, r), 'lab_home');
     this.sim.write(LAB_HOME, bytes(0xcb, 0xcb));
+    // H-STUBTASK: tasks the lab starts but models as an immediate return (`ret [],0`), so they run no firmware code and
+    // go dormant at once -- the _bare_return path (used by E134/E145's static bare-retf display tasks). MODEL_INFO.stub_tasks
+    // names them in disassembly notation. Used where a body's display-open act_tsk's a background worker whose init needs
+    // device hardware the lab does not model, and nothing synchronously waits on its progress (E113's lens/FCS detect
+    // worker 0x500f95cc: its only external reader logs its phase global 0x606b7f94, no block; E143 settles never starting it).
+    for (const d of (MODEL_INFO.stub_tasks ?? [])) this.sim.write(runtime(d), bytes(0xDF, 0x00, 0x00));
     const initIds = [];
     for (const [t, [e]] of this.nk.tasks()) if (e === INIT_TASK_ENTRY) initIds.push(t);
     if (initIds.length !== 1 || this.state(initIds[0]) !== 2) throw new FirmwareError(`init task not found READY: ${show(initIds)}`);

@@ -1594,12 +1594,20 @@ export const MODELS = {
     // semaphore-pool reinit (isig_sem -> E_NOEXS; docs/om-emu/e113-menu-port.md FINDING 2026-11-17i). E143 unaffected
     // (extra_tasks is per-model; its display-open does not reinit the pool).
     extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5,
-      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7,
-      // 0x500f95cc: a device-worker task act_tsk'd during display-open (TFT bring-up). Its body (runtime 0x7da8a5ec)
-      // is a phase state machine driving global 0x606b7f94 through 0,1,2,3 and parking on OlyQe event-flag 0x7d9b0510
-      // (twai 0x7d9c1138, pattern 3). It is allowed to run natively and park in that wait; the menu does not depend on
-      // its completion. First reached once the settle wall (slp/iwup re-register) was cleared. docs/om-emu/e113-menu-port.md.
-      0x500f95cc],
+      0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7],
+    // stub_tasks (H-STUBTASK, src/lab/kernel.mjs start): the lens/FCS detect worker 0x500f95cc, act_tsk'd by E113's
+    // display-open (TFT bring-up), started as an immediate return. Its body (runtime 0x7da8a5ec) is a phase state machine
+    // (global 0x606b7f94) whose FIRST act is an init poll loop (0x7da8a5fb) calling detect routine 0x7d9d8915 with a 16 ms
+    // retry (0x7d9c1982) until it returns 0, only THEN parking on OlyQe event-flag 0x7d9b0510 (twai 0x7d9c1138, pattern 3).
+    // That detect routine issues SCPU lens-present query 0x20041001 (pc 0x7d9dbbf7) and writes the lens units -- FCS
+    // 0x9bf00000, 0x9bb00000, mec 0x9b900000 ... (bank 0x7dac, pc 0x7dac1255+) -- none of which E113 models (board lens
+    // UNKNOWN). With no lens hardware the SCPU query answers "not present" (reg0 0) forever, so the poll never concludes:
+    // it loops (27+ seen) and faults on the first unmapped lens-unit write. E143 settles its own TFT bring-up with 7 tasks
+    // and NEVER starts this worker, proving lens detect is not needed for a settled bring-up. The worker is fire-and-forget
+    // (its only external reader 0x7da8c596 logs the phase global via 0x7d997b14, no block; its flag-setting states 2/3 are
+    // past the init loop and never run today either), so stubbing it to a no-op matches E143's no-lens-worker settle.
+    // docs/om-emu/e113-menu-port.md.
+    stub_tasks: [0x500f95cc],
     // disp_sync_init (src/lab/display.mjs start): E143's display-sync module is absent from the E118 family (as E120,
     // its evidence there). Measured: the "disp_sync_work" trace string E143 carries (3 occurrences) is absent from
     // E113's image (0 occurrences, same as E120), so there is no disp_sync init to run and A(0x507f2fe0) has no place.
