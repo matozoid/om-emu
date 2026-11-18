@@ -933,6 +933,14 @@ export class PlayLab extends N.NavLab {
   install_xcpu(image) {
     const intc = this.nk.intc;
     if (intc === null || intc.version() < 2) throw new PlayError('S-CPU2: the interrupt controller window has no +0x808 model');
+    // A model whose build has no GUI snapshot service on CPU 2 (MODEL_INFO.xcpu_standin.no_gui_swap, with its evidence
+    // in src/fw/models.mjs) and whose post sites are therefore unplaced: no S-CPU2 hook, the logs stay empty. A post to
+    // CPU 2 that such a build does make is left unserviced and shows as a wait that never ends, not as a served one.
+    if (MODEL_INFO.xcpu_standin?.no_gui_swap && isUnmapped(XCPU_REPLY_SITE) && isUnmapped(XCPU_POST_RETURN)) {
+      this.xcpu_log = []; this.xcpu_waiting = 0; this.xcpu_seen = intc.xcpu()[0]; this.xcpu_served = new Set(); this.ipi_handler_runs = 0;
+      this.xcpu_absent = true;
+      return;
+    }
     const o = XCPU_REPLY_SITE - 0x50000000;
     if (image[o] !== 0xFC || image[o + 1] !== 0xDC || !is_call_to(image, A(0x50AAAD5F), IRQ.IPI_POST) || !is_call_to(image, A(0x50AA9D4E), IRQ.IPI_POST)) {
       throw new PlayError('S-CPU2: the post sites 0x50aa9d4e / 0x50aaad5f or the immediate at 0x50aaad56 are not as read');
@@ -1277,7 +1285,8 @@ export class PlaySession extends N.NavSession {
     this.takeover_bring_up();
     this.ipi_bring_up();
     if (this.cpu2_native) this.cpu2_bring_up();          // --cpu2 native: core 2 from its entry to its idle loop
-    if (o.mutant !== 'no-aeinit') this.aeinit_bring_up();   // without it the interpolation's div fault comes back
+    if (MODEL_INFO.no_ae_init) this.aeinit = { step: null, base: null, table: null };   // no init in the build (models.mjs)
+    else if (o.mutant !== 'no-aeinit') this.aeinit_bring_up();   // without it the interpolation's div fault comes back
     if (MODEL_INFO.acc) this.acc_bring_up();
     if (MODEL_INFO.ui_out) this.ui_out_bring_up();         // before the file layer (E134) and the application (E143)
     if (this.storage_runs()) this.storage_bring_up();

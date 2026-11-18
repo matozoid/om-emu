@@ -716,9 +716,19 @@ const DISPLAY_API = { request: 0x10035, image_sync: 0x10037 }, API_HEAD = 16, RE
 // the names a trace loads where no entry loads the id, in order: the E118 family's register form, then E120's record
 // form (MULTI_EXT names the record's fields)
 const DISPLAY_API_NAMES = {
-  request: ['api_disp_Disp_Update_Osd', 'api_disp_Disp_Sync_Update_Osd_Multi_Ext'],
-  image_sync: ['api_disp_dummy_Disp_Update_Force_Disp_Sync', 'api_disp_Disp_Sync_Force_Update_Multi_Ext'],
+  request: ['api_disp_Disp_Update_Osd', 'api_disp_Disp_Sync_Update_Osd_Multi_Ext', 'api_disp_Disp_Sync_Update_Osd'],
+  image_sync: ['api_disp_dummy_Disp_Update_Force_Disp_Sync', 'api_disp_Disp_Sync_Force_Update_Multi_Ext', 'api_disp_Disp_Sync_Force_Update'],
 };
+// E113's form (2026-11-18, D): the module is E120's (its force path 0x50443787 takes codes 15 and 18, the image's
+// commit 0x5044393c code 16), behind an API with one panel channel and no device code. The request
+// api_disp_Disp_Sync_Update_Osd (0x501fdcb1) takes a0 the three OSD handles and d0 the u16 type, which it passes to the
+// module as the exec (3 and 5 as they are, else 1; 0x501fdcfd..0x501fdd08 -> 0x50442a95); the GUI's synced update
+// sends type 5 (0x50651dd3; X: at 0x0108 one type 1 and then one type 5, nothing committed after it, the VSC's plane
+// enables +0x30 and OSD bases +0x44.. unwritten). The image sync api_disp_Disp_Sync_Force_Update (0x501fdf8c) takes d0
+// the code and compares it with 15, 16 and 18 (0x501fdfaa..0x501fdfb4). Its one caller is stopRecView's (0x50777d8d,
+// code 16), after `clr d0; call` of the one sync word's setter (0x506308e9: `mov d0,(0x6044cfc4)`). The release: the
+// setter with 0 and code 18. SINGLE names the type and the device code the lab keeps the request under.
+const SINGLE = { synced: 5, code: 18, device: 1 }, CLEAR_ONE = [0x00];
 const MULTI_EXT = { type: 16, device: 20, synced: 5, code: 18, code_at: 0, device_at: 4 }, MULTI_EXT_HEAD = 0x60;
 const CMP_D0 = (n) => [0xa0, n];
 const CLEAR_BOTH = [0x00, 0x85, 0x02], CLEAR_TFT = [0x00, 0x81], CLEAR_EVF = [0x00, 0x85, 0x01];
@@ -726,14 +736,16 @@ const CLEAR_BOTH = [0x00, 0x85, 0x02], CLEAR_TFT = [0x00, 0x81], CLEAR_EVF = [0x
 // head bytes (API_HEAD for an id; NAME_HEAD for a name, which E120's request loads after clearing its locals, 0x13
 // bytes in, 0x502a6042..0x502a6055, D)
 const NAME_HEAD = 0x20;
-function apiEntries(img, value, head = API_HEAD) {
+// (nearest: only the entry nearest each load, for E113's one-channel names, whose request follows a 0x18-byte getter
+// that a walk by instruction lengths runs through, return and all: 0x501fdc99 before 0x501fdcb1)
+function apiEntries(img, value, head = API_HEAD, nearest = false) {
   const at = [];
   for (const p of loadsOf(img, value)) {
     for (let e = p - 1; e >= p - head; e--) {
       if (!isRet(img, e - 3)) continue;
       let q = e;
       while (q < p) q += insnLength(img[q], img[q + 1]);
-      if (q === p) at.push(e);
+      if (q === p) { at.push(e); if (nearest) break; }
     }
   }
   return at;
@@ -743,7 +755,7 @@ export function displaySync(img) {
   const { base } = imageBase(img), named = {};
   for (const [k, names] of Object.entries(DISPLAY_API_NAMES)) {
     for (const name of cand.get(k).length ? [] : names) {
-      const at = findString(img, name, { nul: true, after: true }).flatMap((o) => apiEntries(img, base + o, NAME_HEAD));
+      const at = findString(img, name, { nul: true, after: true }).flatMap((o) => apiEntries(img, base + o, NAME_HEAD, name === names[2]));
       if (at.length) { cand.set(k, at); named[k] = name; break; }
     }
   }
@@ -758,10 +770,13 @@ export function displaySync(img) {
   if (out.request === undefined || out.image_sync === undefined) return undefined;
   const multi = named.request === DISPLAY_API_NAMES.request[1];
   if (multi !== (named.image_sync === DISPLAY_API_NAMES.image_sync[1])) throw new Error(`displaySync: the request ${h8(out.request)} by ${named.request ?? 'its id'} and the image sync ${h8(out.image_sync)} by ${named.image_sync ?? 'its id'}, want one form`);
+  const single = named.request === DISPLAY_API_NAMES.request[2];
+  if (single !== (named.image_sync === DISPLAY_API_NAMES.image_sync[2])) throw new Error(`displaySync: the request ${h8(out.request)} by ${named.request ?? 'its id'} and the image sync ${h8(out.image_sync)} by ${named.image_sync ?? 'its id'}, want one form`);
   const record = multi ? { record: MULTI_EXT } : {};
-  if (multi) {
+  if (multi || single) {
     const head = img.subarray(out.image_sync - 0x50000000, out.image_sync - 0x50000000 + MULTI_EXT_HEAD);
-    const codes = [15, 16, MULTI_EXT.code].filter((n) => head.some((x, k) => bytesAt(head, k, CMP_D0(n))));
+    // (`cmp n,d0`; the one-channel form keeps the code in another data register, `cmp n,Dn`: a0, a5, aa, af)
+    const codes = [15, 16, MULTI_EXT.code].filter((n) => head.some((x, k) => (single ? [0xa0, 0xa5, 0xaa, 0xaf] : [0xa0]).some((op) => bytesAt(head, k, [op, n]))));
     if (codes.length !== 3) throw new Error(`displaySync: the image sync ${h8(out.image_sync)} compares the code with ${codes.join(', ') || 'none'} of 15, 16, ${MULTI_EXT.code} within 0x${MULTI_EXT_HEAD.toString(16)} bytes, want all three`);
   }
   const release = callers.get(out.image_sync - 0x50000000);
@@ -775,6 +790,12 @@ export function displaySync(img) {
     }
     return sets;
   };
+  if (single) {
+    // (the setter is the nearest such call's target that stores d0 to a word, `mov d0,(abs32)`: fc 81)
+    const set = release.length === 1 ? clears(release[0], CLEAR_ONE).find((c) => bytesAt(img, c.to - 0x50000000, [0xfc, 0x81])) : undefined;
+    if (!set) throw new Error(`displaySync: the image sync ${h8(out.image_sync)} has ${release.length} callers, want 1 after a 'clr d0; call' of the sync word's setter`);
+    return { ...out, sync_set: set.to, kind: SINGLE.code, panels: [0], single: SINGLE };
+  }
   const both = multi ? [] : clears(release[0], CLEAR_BOTH);
   if (both.length > 1) throw new Error(`displaySync: ${both.length} 'clr d0; mov 2,d1; call' within 0x${RELEASE_SPAN.toString(16)} bytes before the image sync's call at ${h8(0x50000000 + release[0])}, want 1`);
   if (both.length) return { ...out, sync_set: both[0].to, kind: 1, panels: [2] };

@@ -110,7 +110,7 @@ const PROBE_XFAIL = {};
 // playback, INFO, a shot; not on an S1 that changes nothing on the screen nor at idle (X: E118, E120, E122,
 // docs/model-survey.md finding 61). INFO cycles the four views of the shooting screen back to the first on both
 // panels (X); PLAY and back redraws too, and stalled on E120's and E122's EVF before finding 70
-const REDRAW_MAX = 8, PROBE_REDRAW = { E118: 'info', E120: 'info', E122: 'info' };
+const REDRAW_MAX = 8, PROBE_REDRAW = { E113: 'info', E118: 'info', E120: 'info', E122: 'info' };
 // the bodies whose EVF runs the whole path, playback included. The E118 family's kind-3 compositor draws the EVF's
 // playback (the plane's level 0xb2 drawn as full, docs/om1-vsc-spec.md section 12; X: PLAY, INFO and PLAY on the
 // three); E120's and E122's ran into their display task's 40 ms poll until the VSC raised its line compare

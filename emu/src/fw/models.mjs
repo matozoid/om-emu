@@ -1407,14 +1407,14 @@ export const MODELS = {
     // set, the buswin device backs every non-0x58 offset as a scratch register file (reset 0, width 1/2/4) so the RMW
     // reads back its own prior writes; 0x58 keeps its strict window-remap semantics. These pads carry no HLE-relevant
     // side effect (hardware pin direction/drive). Set on the E118 family where this library runs; E143 keeps the tripwire.
-    // engine.depth / engine.word22: E113 draws its OSD fills at depth code 5 (= 4 bytes/pixel; its bit22-clear
-    // fills decode to width*4 == stride exactly, e.g. 2048x57 stride 8192, 544x1 stride 2176) and sets w[3] bit 22
-    // on single-row remainder fills, where the reference E118 bodies (E120/E122) use depth 3 and never set bit 22.
-    // The strict OSD-engine model (src/dev/engine.mjs) hard-codes depth==3 and bit-22-reserved, so E113's first UI
-    // draw was rejected (DEPTH 5 / WORD_BITS) and the firmware then divu-by-zeroed on the resulting zero count at
-    // 0x7d9962c0. Admit E113's format by hand; E120/E122 keep the strict check. (The fill's pixel math stays 1 B/px,
-    // which is exact for E113's black surface-clears on lazily-zeroed DRAM; a full 4bpp model is pending non-black
-    // draws.) bit22's exact field meaning on E113 is not yet pinned -- see docs/mods/related-projects.md Wall 3.
+    // engine.word22: E113's fills set w[3] bit 22 on single-row remainder fills, which the strict OSD-engine model
+    // (src/dev/engine.mjs) reserves (WORD_BITS) and the reference E118 bodies (E120/E122) never set; admitted by hand
+    // (its field meaning on E113 is not pinned; seen before the depth correction below and not re-tested without it since). The depth is the family's 3: an earlier `engine.depth: 5` here was
+    // WRONG, read off fills seen while the bring-up was still broken (4 bytes a pixel, 2048x57 stride 8192). With the
+    // GUI's display sync released (display.sync, the one-channel form of src/fw/facts.mjs displaySync) every OSD
+    // command E113 issues is depth 3 on the 896-stride canvas (fills 0x20000310, copies 0x24000320, pictures
+    // 0x20001b30), and depth 5 refused all 87 of the start screen's (X: DEPTH x87, the three OSD planes all zero, a
+    // one-colour frame); at depth 3 the engine reports no error and the TFT and EVF screens draw (bin/modelcheck.mjs).
     // dram_chip (src/machine.mjs): E113's PHYSICAL DRAM chip is 512 MiB, distinct from dram_size (the derived
     // gui-managed-heap top, 0x1d971200 ~= 474 MiB — a software placement below the chip top on this body). The
     // E118-family chip is 512 MiB (facts.mjs dramSize comment: E118/E120 GUIs end at 0xc0000000); E120/E122 place
@@ -1439,7 +1439,7 @@ export const MODELS = {
     // no port block) -> scpu.read throws BUS (fault 2). Back 0xa0 as plain storage so the RMW reads back what it writes.
     // STAND-IN: one port word as storage, not the SCPU event-port/level semantics (E143-family's events at 0xa0..0xb8
     // can't be grafted -- E118 puts its clock at 0x98, colliding with that family's events.pending). E113-only.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { depth: 5, word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 }, scpu: { storage: [[0x00, 0x94], [0xa0, 0xa0]] } },
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 }, scpu: { storage: [[0x00, 0x94], [0xa0, 0xa0]] } },
     // boot_seeds (src/lab/menu.mjs bring_up H-E113SEED): [addr, value, width] the lab writes to DRAM before the firmware
     // runs, standing in for native init blocks the lab does not drive. Each is a documented E113 stand-in, NOT a HW
     // byte-match -- see docs/om-emu/e113-boot-walls.md. E113-only (no other model defines boot_seeds).
@@ -1458,12 +1458,27 @@ export const MODELS = {
     // xcpu_standin (src/lab/kernel.mjs install_guards): E113 is a 3-core SoC; its menu bring-up performs real inter-CPU
     // rendezvous the one-CPU lab cannot complete. Two primitives on the path: XCPU_WAIT (0x500127cb = this model's
     // A(0x5001258b)), an inter-core doorbell post/wait to an absent core (direct-called, returned via finish()); and the
-    // IPI barrier (barriers: 0x500125a3, vtable-dispatched via perCPU+304..), which sets its own ready bit in the
-    // 0x8ff00000 halfword then spins until it reads (1<<coreCount)-1 -- bits the absent cores never set, a fault=7
-    // deadman. With this fact each returns cleanly (as its own `ret` would), as if every core had synced -- a documented
-    // stand-in (the other cores' side effects are skipped, surfacing the next wall). docs/om-emu/e113-boot-walls.md
-    // Walls F/G. Other models keep the hard stop.
-    xcpu_standin: { barriers: [0x500125a3] },
+    // IPI barrier (E113 0x500125a3 = this model's A(0x50012367), vtable-dispatched via perCPU+304..), which sets its own
+    // ready bit in the 0x8ff00000 halfword then spins (setlb/Lne at 0x5001260c) until it reads (1<<coreCount)-1 -- bits
+    // the absent cores never set, a fault=7 deadman. The barriers fact holds the E143-CANONICAL key (0x50012367, E143
+    // runtime 0x60033387), which kernel.mjs:147 feeds through A() to land the hook on E113's 0x500125a3; the earlier
+    // E113-address-as-key (0x500125a3) was itself A()-remapped to 0x500127e3 (a mid-instruction non-target), so the
+    // barrier was never intercepted and H-UIIN's full UI init spun to fault 7 (the menu bring-up settles before this
+    // site; the modelcheck TFT play path reaches it). With the key corrected each returns cleanly (as its own `ret`
+    // would), as if every core had synced -- a documented stand-in (the other cores' side effects are skipped, surfacing
+    // the next wall). docs/om-emu/e113-boot-walls.md Walls F/G. Other models keep the hard stop.
+    // no_ae_init (src/lab/play.mjs play_bring_up): the interpolation 0x5052d4ba is the clamping form (3328 bound, no
+    // step table, no division), and the function facts.mjs aeInit takes for its init -- the call target before the
+    // wrapper 0x5052bab0 -- is 0x5052ba95, one of four 27-byte stubs that log 0x0e0000ff and return 0x7fff (H-AEINIT:
+    // 0x5052ba95 = 32767 when called). The build has no AE init to run, and nothing a missing one leaves undivided.
+    no_ae_init: true,
+    // no_gui_swap (src/lab/play.mjs install_xcpu): E143's S-CPU2 serves the GUI's post of 0x60acb193 to CPU 2, whose
+    // command 3 copies a 28-byte snapshot to 0xa33da484 and replies through 0x60acbfb7. E113's build has no such
+    // service: the snapshot destination is absent from its port, and of the 24 callers of its IPI post 0x5003891b
+    // (the function before IPI_STORE 0x500389b7, `cmp 3,d1` core bound) the only (func, 0) post to core 2 is the AE
+    // histogram worker's requester 0x50534caa (worker task 0x50534c29 runs 0x5053fb7c on buffers at 0xa0a90400 and
+    // replies with 0x50534cbe from 0x50534c97) -- a different service, not modelled.
+    xcpu_standin: { barriers: [0x50012367], no_gui_swap: true },
     // idle_block (src/lab/kernel.mjs boot, after init): E113's kernel idles through a per-CPU-control-block
     // indirection E143 lacks. The idle-start gate (fn 0x7d9a2b65 / disasm 0x50011b45) reads block field[360]
     // (idle-ready): if !=1 it wires dispatch to the panic self-loop 0x7d9a730b (bra .); if ==1 it calls
@@ -1518,7 +1533,36 @@ export const MODELS = {
     // (`mov (abs32),d0; cmp 6,d0; bne; mov 4014,d0; mov 8,d1`) names propId 4014 and EVF code 6, identical to
     // E120 (same E118 family). The cross-build map leaves E143's PROP_DEVICE_SITES null, so the facts.mjs
     // propDevice/evfCode rules emit no `prop` for E113; supplied by hand here with that measurement.
-    prop: { device: 4014, evf_code: 6 },
+    // device_read: E113's code reads the output device as property 4013 (151 `mov 4013,d0` sites, 150 of them into the
+    // getter 0x50202f98; E120 has none), e.g. the HighLevel display set-up 0x50651fa6, whose value goes to the display
+    // size getter 0x501fc1b3 (it takes 1, 2, 4, 8 or 16 only and otherwise leaves its result unwritten: the scaler
+    // then divides by a zero height at 0x5022813e). The only writer is the display open's 4014 = 8 / 4 / 1
+    // (0x500f49b2). Run in the lab: both ids read 0 before, and both read 1 after the setter 0x501d9e25(4014, 1) (X).
+    prop: { device: 4014, evf_code: 6, device_read: 4013, any_site: true },
+    // movie_time_size (src/lab/camapp.mjs S-CARD movie time): E113's movie time query 0x504cd2c6 fills 14 bytes through
+    // 0x504e20fd (three words and a halfword at +12; E120's 0x5050e894 fills 24), and its callers 0x50205198 and
+    // 0x502051c1 keep the record at (4,sp) of a 24-byte frame: E143's 24 bytes overwrote the return address there (X:
+    // the tft child returned to 0x8940 from 0x502051e1).
+    movie_time_size: 14,
+    // output_evf (src/lab/camapp.mjs S-OUTDISP): the internal EVF's code in getOutputDisplay's output enum. E113's
+    // getOutputDisplay (0x5087a17b, the override of 0x5104fd44) answers 4 where the TFT's test 0x508872a7 holds and 5
+    // where the EVF's 0x5088729e does (`mov 4,d2` 0x5087a1c1, `mov 5,d2` 0x5087a1d1), E120's 5 and 6 at the same two
+    // tests (0x508ed775, 0x508ed785: its enum has one more output before them). Answered 6, E113's GUI never
+    // reached its output: at POWER_ON it took 0x9601, 0x1100, 0x1002, 0x9b01 over and over (X: S-OUTDISP 1010 times,
+    // S-DISPSYNC 405, "event storm: more than 810 GESetEvent calls in step 01-S-CAMAPP start"). Measured in E113's
+    // own image (D).
+    output_evf: 5,
+    // object_pools (src/lab/camapp.mjs find_reactive): E113's allocator is not E143's size-class heap. Its malloc
+    // 0x50476040 picks one of three fixed-block bitmap pools by size (<= 128, <= 2048, <= 16384; a larger request gets
+    // null), each split per CPU by (0x8050), and 508 sites call the pool getters directly (0x50005f36.. through the
+    // locked wrapper 0x50005fde): 192-byte blocks x 3712 from 0x60001fc0 (0x50006044), 16448 x 128 from 0x600b8540
+    // (0x500060fc), 2112 x 544 from 0x60326c00 (0x500061ac), ending 0x6043f400. It runs natively: S-HEAP's hooks sit on
+    // the map's malloc and free and are not called (X: the lab's heap top is unmoved at the start screen), and the
+    // HLS shooting reactive is in the 2112-byte pool (X: 0x6034eacc, the only word of its vtable in RAM).
+    object_pools: [0x60001FC0, 0x6043F400],
+    // no frame plane of E143's form, as the E118 family's later bodies (E120, E122): E143's FRAME_MODE_SET has no
+    // place here and facts.mjs finds no clamp-form uploads
+    frame_plane: null,
     // display.timer_sleep (src/lab/menu.mjs S-TIMERSLEEP): the display code's software-timer sleep, called with a0
     // null for a one-shot wait. facts.mjs timerSleep finds it by a byte signature present on the 18 later images but
     // NOT on E113 (older build), so it is supplied by hand. Measured in E113's own image, not carried from the map:
@@ -1614,19 +1658,11 @@ export const MODELS = {
     // parks in WAI). Added so the real bring-up reaches the true next wall. E143 unaffected (per-model).
     extra_tasks: [0x5021c82c, 0x50031c0c, 0x50032ed8, 0x50038e2f, 0x50053c58, 0x5003400f, 0x5005cb01, 0x500529db, 0x500441ea, 0x50043fd5,
       0x500442dc, 0x500f5b75, 0x5003ca91, 0x500f7722, 0x500387f7, 0x5005148d],
-    // stub_tasks (H-STUBTASK, src/lab/kernel.mjs start): the lens/FCS detect worker 0x500f95cc, act_tsk'd by E113's
-    // display-open (TFT bring-up), started as an immediate return. Its body (runtime 0x7da8a5ec) is a phase state machine
-    // (global 0x606b7f94) whose FIRST act is an init poll loop (0x7da8a5fb) calling detect routine 0x7d9d8915 with a 16 ms
-    // retry (0x7d9c1982) until it returns 0, only THEN parking on OlyQe event-flag 0x7d9b0510 (twai 0x7d9c1138, pattern 3).
-    // That detect routine issues SCPU lens-present query 0x20041001 (pc 0x7d9dbbf7) and writes the lens units -- FCS
-    // 0x9bf00000, 0x9bb00000, mec 0x9b900000 ... (bank 0x7dac, pc 0x7dac1255+) -- none of which E113 models (board lens
-    // UNKNOWN). With no lens hardware the SCPU query answers "not present" (reg0 0) forever, so the poll never concludes:
-    // it loops (27+ seen) and faults on the first unmapped lens-unit write. E143 settles its own TFT bring-up with 7 tasks
-    // and NEVER starts this worker, proving lens detect is not needed for a settled bring-up. The worker is fire-and-forget
-    // (its only external reader 0x7da8c596 logs the phase global via 0x7d997b14, no block; its flag-setting states 2/3 are
-    // past the init loop and never run today either), so stubbing it to a no-op matches E143's no-lens-worker settle.
-    // docs/om-emu/e113-menu-port.md.
-    stub_tasks: [0x500f95cc],
+    // No stub_tasks: 0x500f95cc is the UI_IN task (this model's A(0x5014b736), src/lab/play.mjs UI_IN), not a lens
+    // worker. An earlier entry here made it an immediate return (H-STUBTASK), so play_bring_up's act_tsk left it DMT and
+    // no pushed group image ever reached the UI_IN groups' old-state bytes: every switch read 0 through 0x50214fbe, the
+    // app took the composite cable (0x02020400) and USB (PC_START_PC_USB_SELECT) for connected, chose TARGET DISP VIDEO
+    // and shut down from POWER_ON (X, the tft child). Its entry gate 0x500478f5 reads (0xa0a537f4), 0 in the lab.
     // disp_sync_init (src/lab/display.mjs start): E143's display-sync module is absent from the E118 family (as E120,
     // its evidence there). Measured: the "disp_sync_work" trace string E143 carries (3 occurrences) is absent from
     // E113's image (0 occurrences, same as E120), so there is no disp_sync init to run and A(0x507f2fe0) has no place.
@@ -1649,19 +1685,14 @@ export const MODELS = {
     // firmware GUI tasks at 1..13 still preempt to process each posted event, and equal priority keeps the home task's
     // own GUI program from running mid-post. This is the configuration check_nav's pri60 mutant exercises (NAV_PRI = LAB_PRI).
     nav_pri: 14,
-    // db_init_saves: the number of synchronous flash-saves the blank-camera settings-DB init performs (src/lab/menu.mjs
-    // store_init, the S-FLASHSAVE count check). E143's DB init 0x503c5473 writes the defaults and persists them inline:
-    // at 0x503c5530 it calls the flash-save 0x503eee94 once (guarded by cmp 0,d3; bne at 0x503c5522), so the lab's
-    // default expects exactly 1. E113's store is the 2022 OM-1 rewrite, not relocated E143 code: its DB init 0x50173d5c
-    // (coverage 538 instr vs E143's 5302) initializes the RAM store through the per-store worker 0x504c41fc (x5) but
-    // performs NO synchronous flash-save — the save functions 0x50203a74 / 0x50203aa1 are absent from the entire DB-init
-    // coverage trace (0 occurrences). E113 persists via deferred message saves instead: 0x50203a74/0x50203aa1 pack a
-    // 16-byte request (call 0x50042bd7) and post it through the lock-guarded dispatcher 0x50213104 (acquire 0x7dc90f9f ->
-    // worker 0x5013b747 -> release) from app-level sites (store.app_saves: 0x5065eadb etc.), which run AFTER store_init,
-    // not during the DB init. So E113's blank DB init flash-saves 0 times. The menu needs the RAM store the DB init fills,
-    // not the NVRAM persist, so 0 is correct and menu-usable. Measured in E113's own image + the DB-init coverage trace.
-    db_init_saves: 0,
     overrides: {
+      // The settings DB init (src/lab/menu.mjs SETTINGS_DB_INIT): the cross-build map anchors E143's 0x503c5473 at
+      // 0x50173d5c, an unrelated function (it takes a semaphore and reads registry item 60881), which loads no defaults:
+      // the indexed getter 0x50202f98 read 0 for settings E120 defaults to 1, 3, 30 (216, 469, 733; X) and the shoot
+      // count 0x50210978 divided by their product. E113's init is 0x501d8d19, instruction for instruction E120's
+      // 0x5027a993 (check, flash save `call ...,[],48` 0x50203a74 returning at the port's 0x501d8d35, then the chain).
+      '0x503c5473': { to: '0x501d8d19', why: 'the settings DB init (SETTINGS_DB_INIT): 0x501d8d19, the instruction-for-instruction twin of E120\'s 0x5027a993; the map\'s 0x50173d5c is an unrelated function' },
+      '0x503d72c5': { to: '0x501df23d', why: 'the DB init\'s read of the output device (menu.mjs STORE_PROP_SITES): the return of `clr d2; mov 4014,d0; call 0x50202f98` at 0x501df232, the shape of E120\'s 0x50281416 (return 0x50281421); unplaced by the map while the DB init was misplaced' },
       // OlyTaSp (the RTOS task-spawn primitive, src/lab/rtos.mjs RTOS): the cross-build map leaves E143's 0x5002c5da
       // unanchored (it is in port.json `unmapped`), so the Kernel's hook of it throws. Measured in E113's run-time image:
       // its 18 RTOS primitives sit in one contiguous block and 17 anchor; OlyTaSp is the function bracketed by the two
@@ -1776,6 +1807,100 @@ export const MODELS = {
       // = 0x19670648 (A()'s hle.mjs runtime() maps it back to 0x47001668; same scheme as placed memcpy 0x1966ffe0 ->
       // 0x47001000, memset 0x196700ec -> 0x4700110c).
       '0x3ffe134d': { to: '0x19670648', why: 'K-CRT-134D C-runtime flash-window SCPU-clock read (`mov (0x98e00098),d0; retf`), hooked by the lab but unplaced by the map (called once in E143, not paired-twice). E113 flash lib loads file 0x10497e0 -> runtime 0x47001000; this function is at file 0x1049e48 (disasm 0x51049e48), window offset 0x668 -> runtime 0x47001668. PORT value 0x19670648 = 0x47001668 - IMAGE_BASE 0x7d991020 + 0x50000000, so A()/runtime() yields 0x47001668 (same scheme as memcpy 0x1966ffe0->0x47001000)' },
+      // CCommon's connect-change pair (menu.mjs B2_OBSERVED), unplaced by the map. E113's CCommon block runs
+      // [0x508ad3bd twin][0x508ad50e twin][doHdmiConnectChange, string xref 0x508ad66c][0x508ad6c1][...doOutEvf/doComp
+      // ConnectChange 0x508ae3a5/0x508ae439], E120's [ConnectChangePlay 0x50927152][doHdmiConnectChange 0x509273ab]
+      // [doHdmiAnother.. 0x50927415][SetConnectState 0x509274fd][..doOutEvf/doComp..]. SetConnectState: 0x508ad6c1 (entry
+      // after the ret at 0x508ad6be, `mov d0,d2; mov a0,a3; mov d0,(16,a3); mov d2,(abs)` as E120's), whose five callers
+      // are exactly the do*ConnectChange functions, as E120's seven. ConnectChangePlay: E113 has two byte-twins (E120 one;
+      // E113 keeps no "ConnectChangePlay()" string); the second, 0x508ad50e, is the one placed directly before
+      // doHdmiConnectChange as E120's, and E120's call sites 0x509cfd44/0x509cfdf6 match E113's 0x50944bd7/0x50944c30
+      // (80 and 47 of 123 context bytes), both callers of 0x508ad50e. (Lower confidence than the rest: the play
+      // session's own "ConnectChangePlay did not run" check is the test.)
+      // IPI_POST: E120's 0x5005077b matched by bytes; the function before IPI_STORE 0x500389b7 (entry after the `ret`
+      // at 0x50038918), core bound `cmp 3,d1`, ring `div 32`, 24 callers each loading (core d0, func a0, arg a1).
+      '0x50035afd': { to: '0x5003891b', why: 'IPI post: byte match to E120 0x5005077b, precedes IPI_STORE, 24 (core, func, arg) callers' },
+      // AE interpolation (src/fw/facts.mjs aeInit reads the init, its regions and the table form from it): 119 of
+      // E120's first 128 bytes at 0x5056ce21 are E113's at 0x5052d4ba.
+      '0x50563138': { to: '0x5052d4ba', why: 'AE interpolation: 119/128 byte match to E120 0x5056ce21' },
+      // Batch byte transfer from E120 (same E118 family, fully ported): for each E143 address E120 places and E113's
+      // port leaves unplaced, the 128 bytes around E120's place were searched in E113's image (6-byte grams voting for
+      // an offset); kept where >= 90 of 128 bytes agree and the runner-up offset is >= 25 bytes worse. 32 of 291.
+      '0x50038666': { to: '0x50039404', why: 'E120 0x500512f1 byte transfer: 96/128, runner-up 50' },
+      '0x5003e0a1': { to: '0x5003a27a', why: 'E120 0x500520e1 byte transfer: 98/128, runner-up 42' },
+      '0x50050539': { to: '0x5004c90c', why: 'E120 0x50060c8f byte transfer: 100/128, runner-up 46' },
+      '0x50059fa4': { to: '0x500fddb8', why: 'E120 0x50162143 byte transfer: 128/128, runner-up 33' },
+      '0x5005d66f': { to: '0x5005657e', why: 'E120 0x5006b15f byte transfer: 102/128, runner-up 18' },
+      '0x5005def6': { to: '0x50056e78', why: 'E120 0x5006ba53 byte transfer: 97/128, runner-up 11' },
+      '0x5005f464': { to: '0x50059d56', why: 'E120 0x5006e993 byte transfer: 105/128, runner-up 12' },
+      '0x5005f587': { to: '0x50059dff', why: 'E120 0x5006ea3c byte transfer: 114/128, runner-up 9' },
+      '0x50064323': { to: '0x5005bb83', why: 'E120 0x50070631 byte transfer: 117/128, runner-up 31' },
+      '0x5012b8b7': { to: '0x500f8757', why: 'E120 0x501527b5 byte transfer: 112/128, runner-up 56' },
+      '0x5015ff58': { to: '0x501d407f', why: 'E120 0x50275ad1 byte transfer: 91/128, runner-up 55' },
+      '0x501a986a': { to: '0x501d6204', why: 'E120 0x502773bf byte transfer: 110/128, runner-up 12' },
+      '0x502c10b8': { to: '0x501303d7', why: 'E120 0x5014693a byte transfer: 109/128, runner-up 58' },
+      '0x502c122b': { to: '0x50130511', why: 'E120 0x50146af9 byte transfer: 125/128, runner-up 54' },
+      '0x502c137b': { to: '0x5013068a', why: 'E120 0x50146c72 byte transfer: 106/128, runner-up 17' },
+      '0x502c1aac': { to: '0x50130e52', why: 'E120 0x50147531 byte transfer: 118/128, runner-up 29' },
+      '0x502c1b83': { to: '0x50130f15', why: 'E120 0x501475f4 byte transfer: 112/128, runner-up 20' },
+      '0x503c2e8d': { to: '0x50180ece', why: 'E120 0x5021c865 byte transfer: 108/128, runner-up 47' },
+      '0x503c5537': { to: '0x501d8d35', why: 'E120 0x5027a9af byte transfer: 103/128, runner-up 32' },
+      '0x5042992d': { to: '0x504c9304', why: 'E120 0x504ed767 byte transfer: 98/128, runner-up 15' },
+      '0x50429935': { to: '0x504c930c', why: 'E120 0x504ed76f byte transfer: 100/128, runner-up 16' },
+      '0x5042b50d': { to: '0x504cab62', why: 'E120 0x504eefee byte transfer: 118/128, runner-up 15' },
+      '0x5048ee61': { to: '0x5045e75d', why: 'E120 0x50462885 byte transfer: 93/128, runner-up 29' },
+      '0x5048f331': { to: '0x5045ebdc', why: 'E120 0x50462d2f byte transfer: 122/128, runner-up 13' },
+      '0x5048f39d': { to: '0x5045ecf9', why: 'E120 0x50462e4c byte transfer: 120/128, runner-up 47' },
+      '0x50585dc2': { to: '0x50541685', why: 'E120 0x50586981 byte transfer: 106/128, runner-up 22' },
+      '0x506ea985': { to: '0x50030409', why: 'E120 0x50048409 byte transfer: 92/128, runner-up 39' },
+      '0x50ab222a': { to: '0x5062efe0', why: 'E120 0x50651fe0 byte transfer: 104/128, runner-up 18' },
+      '0x50bf2f4e': { to: '0x5071e862', why: 'E120 0x5075e171 byte transfer: 96/128, runner-up 61' },
+      '0x51242240': { to: '0x5099689a', why: 'E120 0x50a38b5f byte transfer: 105/128, runner-up 14' },
+      '0x51251c53': { to: '0x509a82a9', why: 'E120 0x50a4ead4 byte transfer: 92/128, runner-up 38' },
+      // API sender's return (facts.mjs API_SEND_RETURN_E143, fact 'api'): 72/128 to E120 0x502a9076 (runner-up 16); the
+      // site follows `call 0x50030409` (OlyQeWr) of a two-word [a3, d2] packet to the queue (a2), as E120's does.
+      '0x503eba07': { to: '0x50201b8f', why: 'API sender return after its OlyQeWr call; E120 0x502a9076 byte transfer 72/128, runner-up 16' },
+      // read side by side against E120's listing (operand-masked transfer, then the instruction streams compared)
+      '0x50abe026': { to: '0x5063704e', why: 'module-9 reader: E120 0x5065ab19, masked transfer 145/192 (runner-up 82), same call/branch stream' },
+      '0x5042da58': { to: '0x504cd2c6', why: 'movie time query: E120 0x504f1939, the same 40209/40210 result codes around one null check' },
+      '0x500421cd': { to: '0x50042d94', why: 'setting save: E120 0x500562a2, identical instruction stream (movhu (4,a2) / (2,a2) guards)' },
+      '0x5104fd44': { to: '0x5087a17b', why: 'getOutputDisplay: E120 0x508ed736, masked transfer 109/192, the same first call and vtable +44 query' },
+      '0x50597e82': { to: '0x50150689', why: 'exposure calc: E120 0x505922fd, same frame shape (add -552,sp vs -588) after the same exth/call tail' },
+      '0x502a63c2': { to: '0x50112f8e', why: 'lens derive (apertures): E120 0x50125c59, identical stream (three movhu clears, then the 0/1/2/3/4/257/256/4096 switch)' },
+      // E113's display HAL has one vsync flag word, 0x7d9b0572 (flag 140): set at 0x50226f9a / 0x50226fac (interrupt
+      // and task forms), cleared at 0x50226fc6, waited at 0x50226fdd, the same four-user shape as E120's channel 0 word
+      // 0x60040f44 (0x502d3301.., after a `ret [d2,d3,a2,a3]` function, where its channel 1's 0x502d475f follows a
+      // `ret [a2],8`). The map gave it to E143's HDMI key and put the EVF key (a later body's channel 0) at 0x7dc365dc,
+      // a word no code reads; no second word of that shape was found for channel 1 (the HDMI key keeps the map's place,
+      // the same word, which the lab finds first as channel 0)
+      '0x600430de': { to: '0x7d9b0572', why: 'the channel 0 (TFT, EVF) vsync flag word; see the comment above' },
+      '0x51049ebb': { to: '0x50877267', why: 'CA_MAIN, the camera application main task: E120 0x508eaf45, masked transfer 184/192 (runner-up 48)' },
+      '0x510c412a': { to: '0x508ad50e', why: 'CCommon::ConnectChangePlay: the twin directly before doHdmiConnectChange (E120\'s layout), called from the sites E120\'s callers match; unplaced by the map' },
+      '0x510c4946': { to: '0x508ad6c1', why: 'CCommon::SetConnectState: the function after doHdmiConnectChange that the do*ConnectChange functions call (five sites), as E120\'s 0x509274fd; unplaced by the map' },
+      // The touch task and its id (play.mjs TOUCH_TASK, TOUCH_TASK_ID; H-TPINIT's act_tsk). E113's boot at 0x500f6216 runs
+      // `call 0x5022b19b (TOUCH_INIT); movhu (0x7d9b0336),d0; exth d0; call 0x500307df (act_tsk)`, E143's 0x60045cc6 row
+      // (`call TOUCH_INIT; movhu (0x60042dcc),d0; exth; call act_tsk`): the id word is the ROM constant 0x7d9b0336 = 105,
+      // and the static task table's row for id 105 (0x7d9a9ee4: id 0x69, entry 0x7dbbc207, priority 7, stack 0x400) gives
+      // the entry 0x5022b1e7, the function right after TOUCH_INIT's ret (the event-flag wait loop on (0x7d9b0580)). The
+      // map placed the id at the neighbour word 0x7d9b033a = 107 (task 0x500f3f10, another module's: X, "kernel would
+      // start firmware task entry 0x500f3f10: not modelled") and left the task unplaced.
+      '0x60042dcc': { to: '0x7d9b0336', why: 'TOUCH_TASK_ID: the ROM id word E113\'s boot reads for the act_tsk right after TOUCH_INIT (0x500f621d), = 105; the map\'s 0x7d9b033a holds 107, another task\'s id' },
+      '0x501e3eac': { to: '0x5022b1e7', why: 'TOUCH_TASK: the static task table\'s entry for id 105 (row 0x7d9a9ee4), the wait loop after TOUCH_INIT\'s ret; unplaced by the map' },
+      // The kernel's lock/unlock cluster (E143 0x50017a6b..0x50017e85, main image) lives in E113's relocated flash library:
+      // the map places it at the library's FILE position (disasm 0x5104a1e5..0x5104a625, inside the 0x510497e0 + 0x1800
+      // window), where the code is never run: it is linked for its SRAM copy at 0x47001000.., so its pc-relative calls into
+      // the main kernel (0x5104a399 `call 0x879eff10` = 0x50015710 once relocated) land in empty RAM when run in place (X:
+      // the lab's LOCK call slid 140.6M zero bytes from 0xb5370f30 into the image start and re-ran boot on every settle
+      // idle). Each value is the SRAM runtime in disassembly notation, file-disasm - 0x379d9800 (the placed memcpy's
+      // 0x510497e0 -> 0x1966ffe0 -> 0x47001000).
+      '0x50017a6b': { to: '0x196709e5', why: 'kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a1e5 (unrunnable in place); its SRAM runtime is 0x47001a05' },
+      '0x50017b6a': { to: '0x19670aea', why: 'kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a2ea (unrunnable in place); its SRAM runtime is 0x47001b0a' },
+      '0x50017b86': { to: '0x19670b06', why: 'kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a306 (unrunnable in place); its SRAM runtime is 0x47001b26' },
+      '0x50017bdd': { to: '0x19670b5f', why: 'LOCK (kernel.mjs), kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a35f (unrunnable in place); its SRAM runtime is 0x47001b7f' },
+      '0x50017c54': { to: '0x19670bde', why: 'UNLOCK (kernel.mjs), kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a3de (unrunnable in place); its SRAM runtime is 0x47001bfe' },
+      '0x50017d41': { to: '0x19670cd3', why: 'kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a4d3 (unrunnable in place); its SRAM runtime is 0x47001cf3' },
+      '0x50017e83': { to: '0x19670e23', why: 'kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a623 (unrunnable in place); its SRAM runtime is 0x47001e43' },
+      '0x50017e85': { to: '0x19670e25', why: 'kernel lock-cluster address in the relocated flash library: the map gives the library\'s file position 0x5104a625 (unrunnable in place); its SRAM runtime is 0x47001e45' },
     },
   },
 };

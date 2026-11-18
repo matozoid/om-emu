@@ -728,7 +728,9 @@ const CBS_AF_LOCK = 155;
 // Under control camapp 3 the display switch is the firmware's own output change (play.mjs native_switch), which sets
 // the session's device before the eye sensor's event: S-OUTDISP's EVF answer is then the input that starts it
 // (docs/hle-gaps.md 4.3.10), with no OPEN or H-CONNECT of the lab's
-const OUTPUT_DISPLAY = A(0x5104FD44), OUTPUT_INTERNAL_EVF = 6;
+// (the internal EVF's code in getOutputDisplay's output enum: 6 on E143 and E120, MODEL_INFO.output_evf where a build's
+// enum differs — E113's has one output fewer before it, its TFT 4 and its EVF 5)
+const OUTPUT_DISPLAY = A(0x5104FD44), OUTPUT_INTERNAL_EVF = MODEL_INFO.output_evf ?? 6;
 // S-THROUGH: OlyHfwOpeShoot::ctrlAutoThrough(ctrl), 0 as the menu opens, 1 as it closes (bin/port.mjs places it by
 // src/fw/facts.mjs shootingService, the function that loads its trace)
 const AUTO_THROUGH = A(0x50ABD373);
@@ -1318,14 +1320,19 @@ export class CamApp {
     this.dispsync_fns = sync;
     if (sync) {
       lab.observe(sync.request, (l, r) => {
-        const [type, code] = rec ? [unpack('<H', l.sim.read(r.a0 + rec.type, 2))[0], l.sim.u32(r.a0 + rec.device)] : [r.d0 >>> 0, r.d1 >>> 0];
-        if (type === (rec?.synced ?? DISPSYNC_REQUEST)) this.dispsync.add(code);
+        // (the one-channel form, sync.single: the type in d0's low half, no device code)
+        const one = sync.single;
+        const [type, code] = rec ? [unpack('<H', l.sim.read(r.a0 + rec.type, 2))[0], l.sim.u32(r.a0 + rec.device)] : one ? [r.d0 & 0xFFFF, one.device] : [r.d0 >>> 0, r.d1 >>> 0];
+        if (type === (rec?.synced ?? one?.synced ?? DISPSYNC_REQUEST)) this.dispsync.add(code);
       }, 'S-DISPSYNC');
     }
     lab.observe(SHOOTING_START, () => { this.shooting = true; }, 'S-RELSEQ (shooting service)');
     lab.observe(SHOOTING_END, () => { this.shooting = false; }, 'S-RELSEQ (shooting service end)');
-    const fd = fact('func_direct.id', { sp: 28 });
-    lab.observe(FUNC_DIRECT_RUN, (l, r) => this.funcs.push(fd.reg ? r[fd.reg] >>> 0 : lab.sim.u32((r.sp >>> 0) + fd.sp)), 'S-RELSEQ function direct');
+    // (a build with no function of facts.mjs funcDirect's shape, E113: no place, no observer, this.funcs stays empty)
+    if (!isUnmapped(FUNC_DIRECT_RUN)) {
+      const fd = fact('func_direct.id', { sp: 28 });
+      lab.observe(FUNC_DIRECT_RUN, (l, r) => this.funcs.push(fd.reg ? r[fd.reg] >>> 0 : lab.sim.u32((r.sp >>> 0) + fd.sp)), 'S-RELSEQ function direct');
+    }
     lab.hook(TRA_EXEC_CALL, (h, r) => tra(h, r, false), 'S-TRAACK');
     // CapIod's write of the output-device property. S-OUTDEV keeps the one its event makes (output_device). In control
     // camapp 3's display switch (play.mjs native_switch, which sets prop_follow for its step) CapIod runs the output
@@ -1376,7 +1383,9 @@ export class CamApp {
     if (!native) lab.hook(MOVIE_TIME_QUERY, (h, r) => {
       const ms = this.recording === null ? 0 : Math.floor((lab.lab_time() - this.recording) / 1e6);
       const left = Math.max(0, CARD_MOVIE_S * 1000 - this.card_used_ms - ms);
-      lab.sim.write(r.a0 >>> 0, pack('<IIIIII', left, left, 0, ms, Math.floor(ms / 1000), 0));
+      // the record is the body's: E143's 24 bytes, or the bytes MODEL_INFO.movie_time_size names (E113's query copies
+      // 14, into callers' frames that hold no more)
+      lab.sim.write(r.a0 >>> 0, pack('<IIIIII', left, left, 0, ms, Math.floor(ms / 1000), 0).subarray(0, MODEL_INFO.movie_time_size ?? 24));
       this.log.push(['card', `movie time from ${where(r.mdr)}: ${left} ms left, ${ms} ms recording`]);
       h.finish(r, { d0: 0 });
     }, 'S-CARD (movie time)');
@@ -1866,10 +1875,13 @@ export class CamApp {
   }
   find_reactive() {
     if (this.reactive !== null) return this.reactive;
-    const lab = this.s.lab, heap = lab.sim.read(HEAP, HEAP_END - HEAP);
+    // the application's objects are on S-HEAP's memory, or in the body's own block pools (MODEL_INFO.object_pools: E113,
+    // whose allocator is not E143's and runs natively)
+    const [lo, hi] = MODEL_INFO.object_pools ?? [HEAP, HEAP_END];
+    const lab = this.s.lab, heap = lab.sim.read(lo, hi - lo);
     const dv = new DataView(heap.buffer, heap.byteOffset, heap.byteLength);
     for (let o = 0; o + 4 <= heap.length; o += 4) {
-      if (dv.getUint32(o, true) === SHOOT_REACTIVE_VT) return (this.reactive = HEAP + o);
+      if (dv.getUint32(o, true) === SHOOT_REACTIVE_VT) return (this.reactive = lo + o);
     }
     throw new FirmwareError(`S-RELSEQ: the HLS shooting reactive (vtable ${h8(SHOOT_REACTIVE_VT)}) is not on the heap`);
   }

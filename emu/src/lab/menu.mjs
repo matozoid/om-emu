@@ -1049,9 +1049,18 @@ export class MenuLab extends T.TextDisplayLab {
       hle.finish(r, { d0: this.props.get(pid) });
       return;
     }
+    // a model whose code reads the output device under a second id (MODEL_INFO.prop.device_read: E113's 4013, which
+    // its property store answers with what was last written to 4014, X): the same answer, from any site
+    if (pid === MODEL_INFO.prop?.device_read) {
+      this.prop_reads.set(pid, (this.prop_reads.get(pid) ?? 0) + 1);
+      hle.finish(r, { d0: this.props.get(this.prop_device) });
+      return;
+    }
     if (pid === this.prop_device) {
       const site = disasm(r.mdr);
-      if (!this.prop_sites.includes(site)) {
+      // a model whose application reads the device at many sites (MODEL_INFO.prop.any_site: E113's 35 `mov 4014,d0;
+      // call` sites, where E143's has one, CA_PROP_SITE): every site is answered, and listed in gui_props
+      if (!this.prop_sites.includes(site) && !MODEL_INFO.prop?.any_site) {
         throw new MenuError(`property ${pid} read from ${where(r.mdr)} outside the display stack: not an S-PROP site ${show(this.prop_sites.map(hex))}`);
       }
       this.gui_props.add([pid, h8(site)]);
