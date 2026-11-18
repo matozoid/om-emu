@@ -798,6 +798,7 @@ export const CAMAPP_STAND_INS = {
   "A-SCPUM4-2": "(OM_EMU_SCPU=native) a link line the sub-CPU does not drive (its pin not an output, an open-drain 1, the reset held) reads as S-SCPUDEV's lines while its reset is held: pin 102 low, the message line high; what the board makes of a released pin is ?",
   "A-SCPUM4-3": "(OM_EMU_SCPU=native) MN pin 107 high holds the sub-CPU's NRST low, S-SCPUDEV's polarity: a pin reset of the STM32L4 that keeps its backup domain (the RTC, the backup registers) and its SRAM; the sub-CPU is powered on at the link's start with a blank backup domain (the camera's has run since its battery went in, ?)",
   "S-WIFIMGR": "(a body with the Wi-Fi manager's requests, src/fw/facts.mjs wifiManager, fact 'wifi_manager': E113 and E120 of the unpacked bodies) the Wi-Fi manager's task runs on a CPU the lab has not, and no radio is modelled (docs/a53-spec.md): the start's two cross-CPU calls (the command's send to the manager's queue, the set of pattern 1 of its flag) and the stop's one (pattern 2) are stepped over with 0, and the lab then calls api_network's own callback as the manager would, argument 0: the first (started, GUI event 0x041c0001) after a start, the fourth (stopped, 0x041c0004) after a stop. So the menu's Connection to Smartphone shows its SSID and password page and End Wi-Fi returns; no access point exists, no client ever connects, and none of the other six callbacks comes. Which callback follows which request is X (a walk on E113: with no callback the wizard stays at 'Wi-Fi Starting' / 'Wi-Fi Stopping' for good, as it does after the second or the error callback); that a camera's manager answers a start with exactly this one and argument 0 is I",
+  "S-MYSETLOAD": "(a body with the settings' Myset load, src/fw/facts.mjs mysetLoad, fact 'myset_load': E113 and E120 of the unpacked bodies; not under camapp 3, where the components run) the menu's recall of a stored Myset (Reset/Myset, Yes) is HLS transaction 12971 with the stored set's data id and kind 0, which S-TRAACK answers at the exec; the part its component would do, the settings device's load of that data (the function that logs loadCustom:MyMode, D: the component's method calls it through the device's vtable for kind 0), is called after the step with the request's id, so the settings stored by Set come back (X, a walk: Digital Tele-converter set On after the Set reads Off after the recall). Another kind is refused. Without it the recall was answered and changed nothing",
   "S-STBREQ": "(a body with the strobe module's request, src/fw/facts.mjs strobeRequest, fact 'strobe': E113 and E120 of the unpacked bodies) a synchronous request to the strobe module (its request function with no completion callback: a flash setting's change, as the menu's Reset makes for each of them; the addresses are with the rule) answered 0 at once while the strobe task is dormant: the boot's user start starts that task and the lab, ending the init task, does not, so the request's receive of the task's reply (no timeout) held the GUI task for good, the menu's Reset > Yes staying on the screen with every key dead (X, E113 and E120). The request is not sent, the module's own check of it (its pending state) is not run, and nothing of the flash is modelled: the setting the application wrote is its own. A request with a callback runs natively (it does not wait). A-STBREQ-1 (I): the strobe task's reply to a setting's change carries nothing its caller reads (D: the request returns 0 whatever the reply holds).",
   "S-MOVRATE": "(a body whose movie record time divides by the movie info's frame rate without a test: E118, X) the MN103's DIVU by 0, whose quotient the manual leaves undefined (emu/FIDELITY-NOTES.md 3.2): the rate is the movie recorder's set-up's, which runs on CPU 2 at a movie take's start or a movie's playback, so it is 0 on the camera too until then (docs/model-survey.md finding 59). While it is 0 the divide is not executed, its quotient taken as 0, and the record time runs on natively and fills its block; the quotient goes only to the block's +20, which two of the query's seven callers read, neither met in the lab's start. What the camera's quotient is, ?",
   "S-LONGTIMER": "the system timer module's long timers (1000 ms and more, set through api_system.c 0x5041fd71 / 0x5041fd0d by the HLS timer service): when one is due in lab time the module's event 0x03010000 | number is published, as the module would",
@@ -842,6 +843,9 @@ export class CamApp {
     this.long_timers = new Map();   // S-LONGTIMER: timer number -> due lab ns
     this.wifi_pending = [];         // S-WIFIMGR: 'start' / 'stop' requests whose callback is due
     this.wifi_requests = [];        // S-WIFIMGR: every request answered
+    this.myset_f = null;            // S-MYSETLOAD: the fact, on a body that has it and whose components do not run
+    this.myset_loads = [];          // S-MYSETLOAD: the Myset loads to run after the step, [data id, kind]
+    this.myset_loaded = [];         // S-MYSETLOAD: the loads run, [data id, the load's d0]
     this.strobe_requests = [];      // S-STBREQ: the synchronous strobe requests answered while its task is dormant
     this.movie_rate_answered = 0;   // S-MOVRATE: the record time's calls answered while the frame rate is 0
     this.funcs = [];           // function direct ids the application started in the step
@@ -1266,6 +1270,7 @@ export class CamApp {
     if (this.play_native) { this.module_queues.delete(apiQueues().PLAY_EXEC); this.play_native.install(); }
     if (this.s.storage?.f.hls) { this.media = new HlsMedia(this.s, this.s.storage); this.media.install(); }   // its HLS side (card_fs.hls)
     if (fact('strobe', undefined)) this._install_strobe(fact('strobe', undefined));                    // S-STBREQ
+    this.myset_f = fact('myset_load', undefined) ?? null;                                              // S-MYSETLOAD
     if (fact('wifi_manager', undefined)) this._install_wifi(fact('wifi_manager', undefined));          // S-WIFIMGR
     this.s.lab.panel_done = true;                                                  // S-PANELDONE (menu.mjs)
     const lab = this.s.lab;
@@ -1349,6 +1354,7 @@ export class CamApp {
         if (device !== OUTPUT_HDMI) throw new FirmwareError(`S-OUTDEV: TRA ${TRA_OUTPUT_DEVICE} from ${where(r.mdr)} asks for output device ${device}: only the HDMI output (${OUTPUT_HDMI}) is stood in`);
         this.outdev.push([device, second, third]);
       }
+      if (b && this.myset_f && !this.native_tra && (b[0] | (b[1] << 8)) === this.myset_f.request) this.myset_loads.push([...unpack('<2I', lab.sim.read(req + 32, 8))]);   // S-MYSETLOAD
       if (this.play_exec !== null) this.play_answer(this.play_exec);                // S-PLAYSEQ
       this.play_exec = null;
       if (this.native_tra && req && !TRAACK_KEPT.has(b[0] | (b[1] << 8))) { this.tra_through(b[0] | (b[1] << 8), r); return; }   // camapp 3
@@ -1546,6 +1552,13 @@ export class CamApp {
       this.play_finish(this.play_pending.shift());
     }
     while (this.outdev?.length) this.output_device(this.outdev.shift());           // S-OUTDEV
+    while (this.myset_loads.length) {                                               // S-MYSETLOAD
+      const [id, kind] = this.myset_loads.shift();
+      if (kind !== 0) throw new FirmwareError(`S-MYSETLOAD: TRA ${this.myset_f.request} asks for kind ${kind} of data ${id}: only the Myset load (kind 0) is stood in`);
+      const r = lab.calls(this.myset_f.load, { d0: id }, undefined, undefined, 5000000);
+      this.myset_loaded.push([id, r.d0 >>> 0]);
+      this.log.push(['myset', `Myset load of data ${id} run in the component's place: ${r.d0 >>> 0}`]);
+    }
     // camapp 3: the component's own TRA 588 opened the HDMI device (X); its channel then runs at the format table's
     // timing (DisplayLab.hdmi_line), the harness rule S-OUTDEV's open follows too
     if (this.native_tra && MODEL === 'E143' && !lab.line_ns.has('hdmi') && (lab.sim.u32(OPENED_WORD) & HDMI_MASK)) {

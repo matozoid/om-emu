@@ -5081,6 +5081,30 @@ export function strobeRequest(img) {
   return { request: 0x50000000 + request, serve: 0x50000000 + failed.find((o) => o !== inside[0]) };
 }
 
+// The settings' load of a stored Myset (fact 'myset_load'; src/lab/camapp.mjs S-MYSETLOAD). D on E113: the menu's
+// Reset/Myset "Yes" on a stored Myset sends HLS transaction 12971, built by the one function that stores the id at +4
+// and its two arguments at +32 (d0, the stored set's data id: 53 for Myset1, the id its "Set" saved under, X) and +36
+// (d1, the kind: 0, X). The component's method 0x5071c1c0 (a0 the component, d0, d1) calls, for kind 0, slot 12 of
+// its settings device (+284): 0x508626f6, which passes d0 to the settings API's load 0x501d704a and logs
+// "loadCustom:MyMode" (the device's kind 1 and 2 slots log the shortcut restores). The load is the function whose
+// trace load sits 11 bytes in, after `add -8,sp; exthu d0; call`, entered by calls. E120 has the same builder and
+// the same form. A body without the trace or without that builder has no fact.
+const MYSET_LOAD_TRACE = 'loadCustom:MyMode', MYSET_LOAD_REQUEST = 12971, MYSET_LOAD_HEAD = [0xf8, 0xfe, 0xf8, 0x1c, 0xdd];
+const MYSET_LOAD_AT = 11;
+export function mysetLoad(img) {
+  const strings = findString(img, MYSET_LOAD_TRACE, { nul: true });
+  if (!strings.length) return undefined;
+  const id = [MYSET_LOAD_REQUEST & 0xff, MYSET_LOAD_REQUEST >> 8];
+  const builder = [0x2c, ...id, 0xf8, 0x70, 0x04, 0xf8, 0x18, 0x20, 0xf8, 0x1c, 0x24];   // mov id,d0; movhu d0,(4,a0); mov d2,(32,a0); mov d3,(36,a0)
+  let built = 0;
+  for (let o = img.indexOf(0x2c); o >= 0; o = img.indexOf(0x2c, o + 1)) if (bytesAt(img, o, builder)) built += 1;
+  if (built !== 1) return undefined;
+  const { base } = imageBase(img);
+  const loads = strings.flatMap((o) => loadsOf(img, base + o)).map((p) => p - MYSET_LOAD_AT).filter((o) => bytesAt(img, o, MYSET_LOAD_HEAD) && isRet(img, o - 3));
+  if (loads.length !== 1) throw new Error(`mysetLoad: ${loads.length} functions of the load's form log "${MYSET_LOAD_TRACE}", want 1`);
+  return { request: MYSET_LOAD_REQUEST, load: 0x50000000 + loads[0] };
+}
+
 // The Wi-Fi manager's requests to its task on another CPU and api_network's callbacks (fact 'wifi_manager';
 // src/lab/camapp.mjs S-WIFIMGR). D on E113: wifi_mngr_start 0x50d76631 (a0 the configuration: SSID, password; it logs
 // "Error : wifi_mngr_start" where it refuses one) stores the command record, sends its 16 bytes to the manager's
@@ -5973,6 +5997,8 @@ export function readFacts({ img, family, resLoad }) {
   if (media !== undefined) facts.media = media;
   const strobe = strobeRequest(img);
   if (strobe !== undefined) facts.strobe = strobe;
+  const myset = mysetLoad(img);
+  if (myset !== undefined) facts.myset_load = myset;
   const wifi = wifiManager(img);
   if (wifi !== undefined) facts.wifi_manager = wifi;
   const bodyVersion = bodyVersionWrite(img);
