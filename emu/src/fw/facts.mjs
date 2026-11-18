@@ -5066,6 +5066,23 @@ export function strobeRequest(img) {
 // (disassembly notation), or undefined where the traces are not held; throws for a trace held or loaded twice, or a
 // walk that meets the return first.
 const USB_OFF_TRACE = 'UsbDisconnectSubAppStatePc', POWER_OFF_TRACE = 'startPowerOff', POWER_OFF_WALK = 80;
+// The body's firmware version as a data object (bodyVersionWrite): the boot copies the version word of the main
+// block's container header, 32 bytes mapped below the image with the word at +0x10 (the update file's: E113's is
+// 0x00001400, E120's 0x00001400, E143's 0x00001900, the number in the file's name), into the data object 0xc082,
+// `mov (HDR + 0x10),a1; mov 0xc082,d0; mov 0,a0; clr d1; call SET` (SET the data objects' setter; E113 0x500f6858,
+// E120 0x5016c4f5), and the system information's getter reads it back (E113 0x50212f41) for the version API's item
+// 1 (API_VERSION_USER, the low half; item 0, API_VERSION_BOOT, is the object 0xc0a2, which the boot fills from the
+// loader's header in RAM, E113 0x500f69ad), which the menu's Firmware page prints as "%X.%X" of the word's bits
+// 12..15 and 8..11 (E113 0x5094a449..0x5094a48f, D): 0x1400 is 1.4. {id, set, word}; undefined where the image has
+// no such write.
+const BODY_VERSION_OBJECT = 0xc082;
+export function bodyVersionWrite(img) {
+  const sites = loadsOf(img, BODY_VERSION_OBJECT).filter((o) => img[o - 6] === 0xfc && img[o - 5] === 0xa1
+    && img[o + 6] === 0x90 && img[o + 7] === 0x00 && img[o + 8] === 0x04 && callAt(img, o + 9));
+  if (!sites.length) return undefined;
+  if (sites.length !== 1) throw new Error(`bodyVersionWrite: ${sites.length} writes of the data object ${BODY_VERSION_OBJECT.toString(16)}, expected 1`);
+  return { id: BODY_VERSION_OBJECT, set: 0x50000000 + callAt(img, sites[0] + 9).to, word: u32(img, sites[0] - 4) };
+}
 export function usbPowerOff(img) {
   const { base } = imageBase(img), held = (s) => findString(img, s, { nul: true, after: true }).map((o) => base + o);
   const usb = held(USB_OFF_TRACE), off = held(POWER_OFF_TRACE);
@@ -5880,6 +5897,8 @@ export function readFacts({ img, family, resLoad }) {
   if (media !== undefined) facts.media = media;
   const strobe = strobeRequest(img);
   if (strobe !== undefined) facts.strobe = strobe;
+  const bodyVersion = bodyVersionWrite(img);
+  if (bodyVersion !== undefined) facts.body_version = bodyVersion;
   facts.recorder = recorder(img);
   facts.dcf = { counts: dcfCounts(img) };
   facts.erase = pictureErase(img);

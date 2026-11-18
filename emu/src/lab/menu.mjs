@@ -497,7 +497,7 @@ export class MenuLab extends T.TextDisplayLab {
       this.kernel_display(device);
       if (this.store === 'native') this.store_init();
     }
-    if (this.store === 'native') { this.persist_inputs(); this.dial_init(); }
+    if (this.store === 'native') { this.body_version(); this.persist_inputs(); this.dial_init(); }
     this.phase = 'bring-up';
     if (this.gui_by_app) {                         // H-GUIBYAPP: the application creates the GUI (gui_adopt after it)
       this.records = []; this.surfaces = []; this.gui_tid = null; this.timer_tid = null;
@@ -694,6 +694,20 @@ export class MenuLab extends T.TextDisplayLab {
       this.store_log.phases.push(rec);
     }
     return rec;
+  }
+  // S-BODYVER (src/lab/camapp.mjs): the boot's copy of the main block's header's version word into its data object,
+  // which the lab's bring-up does not run (and the header is not in the unpacked block), made through the firmware's
+  // setter with the model's version (src/fw/facts.mjs bodyVersionWrite). Nothing on the lab model, whose fact is not
+  // given.
+  body_version() {
+    const f = fact('body_version', undefined);
+    if (!f) return;
+    const m = /^(\d)\.(\d)$/.exec(MODEL_INFO.version ?? '');
+    if (!m) throw new MenuError(`S-BODYVER: the model's version ${show(MODEL_INFO.version)} is not of the form N.N`);
+    const word = (Number(m[1]) << 12 | Number(m[2]) << 8) >>> 0;
+    const r = this.native(f.set, { d0: f.id, a0: 0, d1: 0, a1: word }, `S-BODYVER: data object ${h8(f.id)} = ${h8(word)}`);
+    // the setter returns with the value in d0 (X, E113: 0x1400)
+    if (r.errlog.length) throw new MenuError(`S-BODYVER: the setter ${h8(f.set)} returned ${r.d0}, errlog ${show(r.errlog)}`);
   }
   // The firmware's own blank-store path: registry bootstrap, then settings-DB init, natively, with the stand-ins.
   store_init() {
