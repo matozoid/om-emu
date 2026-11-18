@@ -2894,7 +2894,9 @@ const le32 = (v) => [v & 0xff, v >>> 8 & 0xff, v >>> 16 & 0xff, v >>> 24];
 //   the FAT's free count: `mov 1,d0; call (lock); mov d0,d2; call (flush); mov d2,d0; call (unlock); mov (12,sp),a0;
 //   mov -1,d0; mov d0,(8164,a0)` (E143 0x508881e9, return 0x508881fa; the flush is the place the port gives E143's
 //   0x5004e68a on all 15 images that hold it, X); the E118 family loads the object with `mov (abs32),a0` (E122
-//   0x5056f46f, return 0x5056f480, the object word 0x618c0ff0)
+//   0x5056f46f, return 0x5056f480, the object word 0x618c0ff0; null on E113, whose free count holds no such flush (D: the kernel
+//   flush 0x5004adda has no caller in its file system, 0x504f0000..0x50530000, and the count 0x504ff15e reads the
+//   FAT through the uncached alias, `and 0x1fffffff,d0; or 0xa0000000,d0`)
 // - names: the DCF module's initial folder and file names (E143 0x508749a2 / 0x508749ca: `mov 8,a0; add a3,a0; mov
 //   imm32,a1; call` before `mov 100,d0; movhu d0,(22,a3)`, and `mov 12,a0; add a2,a0; mov imm32,a1; call` before
 //   `mov 1,d0; mov d0,(40,a2)`): '100OMSYS' (the E143 family, E144 and E145) or '100OLYMP', and 'P1010001JPG' on all
@@ -3134,13 +3136,13 @@ export function fileSystem(img) {
   }
   const folder = oneAt(img, DCF_FOLDER, rule, "DCF folder names"), file = oneAt(img, DCF_FILE, rule, 'DCF file names');
   const str = (o) => { let e = o; while (img[e]) e++; return String.fromCharCode(...img.subarray(o, e)); };
-  if ([nand, command, status[0], flush, folder, file].some((v) => v === undefined || v === null)) return undefined;
+  if ([nand, command, status[0], folder, file].some((v) => v === undefined || v === null)) return undefined;
   const fname = str(u32(img, folder + 6) - base), name = str(u32(img, file + 6) - base);
   if (!/^\d{3}[A-Z_]{5} *$/.test(fname) || !/^[A-Z_][0-9A-Z]{3}\d{4}[A-Z]{3}$/.test(name)) throw new Error(`${rule}: the DCF names ${JSON.stringify([fname, name])} are not a folder's and a file's`);
   return {
     init: 0x50000000 + init, tasks, fileclbk, fat_error: fatError, nand, command: 0x50000000 + command, command_fields: fields,
     album_init: albm === null ? null : 0x50000000 + albm,
-    status: 0x50000000 + status[0], cflush: 0x50000000 + flush + FLUSH_RETURN, card_power, card_switch,
+    status: 0x50000000 + status[0], cflush: flush === null ? null : 0x50000000 + flush + FLUSH_RETURN, card_power, card_switch,
     names: { folder: fname.slice(3).trimEnd(), file: name.slice(0, 4), ext: name.slice(8) },
   };
 }
@@ -3227,8 +3229,16 @@ export function mediaHls(img, storage = fileSystem(img)) {
     if (at.length > 1) throw new Error(`${rule}: "${name}" held ${at.length} times, want one`);
     return at.length ? base + at[0] : null;
   };
-  const procFile = fileAt(MDA_PROC_FILE);
-  if (procFile === null) return undefined;
+  const procFile = fileAt(MDA_PROC_FILE), named = procFile !== null;
+  // A build that names no source file (E113: its image holds none of the three files, D) is read by the nameless
+  // forms: the start is the one opening of the image; the handler is the function with the progress compare whose
+  // `ret` that opening follows (E113 0x5063ecd2, start 0x5063f053); the reception's creator is the one heap singleton
+  // creator whose class has the synchronous slot (0x50660a00), and its allocator is operator new (0x508759ef); the
+  // mount constructors are sought after every `mov n,d0; call NEW`. X 2026-11-18: the nameless forms read on E120
+  // (with its names ignored) give its named fact, address for address
+  const openings = [];
+  for (let o = img.indexOf(0x43); o >= 0; o = img.indexOf(0x43, o + 1)) if (bytesAt(img, o, MDA_START(img[o + 1]))) openings.push(o);
+  if (!named && (openings.length !== 1 || !storage)) return undefined;
   const one = (list) => (list.length === 1 ? list[0] : null);
   const loads = (file) => new Set(file === null ? [] : loadsOf(img, file).filter((p) => img[p + 1] === 0xdc));   // mov FILE,a0
   const procLoads = loads(procFile);
@@ -3237,19 +3247,25 @@ export function mediaHls(img, storage = fileSystem(img)) {
   // the handler: its compare with the progress event, its entry and its end
   const handlers = [];
   for (let o = img.indexOf(0xfc); o >= 0; o = img.indexOf(0xfc, o + 1)) {
-    if (!bytesAt(img, o, MDA_PROGRESS) || !loadsIn(procLoads, o, o + MDA_FILE).length) continue;
+    if (!bytesAt(img, o, MDA_PROGRESS) || (named && !loadsIn(procLoads, o, o + MDA_FILE).length)) continue;
     let e = -1;
     for (let k = 5; k <= MDA_HEAD && e < 0; k++) if (img[o - k] === 0xcf && bytesAt(img, o - k + 2, [0xf8, 0xfe])) e = o - k;
     if (e >= 0) handlers.push(e);
   }
+  const endOf = (entry) => {
+    const mask = img[entry + 1], nregs = [...Array(8).keys()].filter((k) => mask & (1 << k)).length, ret = [0xdf, mask, (256 - img[entry + 4]) + 4 * nregs];
+    for (let p = entry; p < entry + MDA_BODY; p++) if (bytesAt(img, p, ret)) return p;
+    return -1;
+  };
+  // nameless: of the functions with the compare, the one whose `ret` the start's opening follows
+  if (!named) for (let i = handlers.length - 1; i >= 0; i--) if (endOf(handlers[i]) + 3 !== openings[0]) handlers.splice(i, 1);
+  if (!named && handlers.length !== 1) return undefined;
   if (handlers.length !== 1) throw new Error(`${rule}: ${handlers.length} media control process handlers (${handlers.map(D).join(', ')}), want one`);
-  const entry = handlers[0], mask = img[entry + 1], nregs = [...Array(8).keys()].filter((k) => mask & (1 << k)).length;
-  const ret = [0xdf, mask, (256 - img[entry + 4]) + 4 * nregs];
-  let end = -1;
-  for (let p = entry; p < entry + MDA_BODY && end < 0; p++) if (bytesAt(img, p, ret)) end = p;
-  if (end < 0) throw new Error(`${rule}: the handler ${D(entry)} has no ret [${mask.toString(16)}],${ret[2]} within 0x${MDA_BODY.toString(16)} bytes`);
-  const first = loadsIn(procLoads, entry, end)[0], newCall = callAt(img, next(next(first)));
-  if (!newCall) throw new Error(`${rule}: the handler's allocation at ${D(first)} calls no operator new`);
+  const entry = handlers[0], mask = img[entry + 1], end = endOf(entry);
+  if (end < 0) throw new Error(`${rule}: the handler ${D(entry)} has no ret [${mask.toString(16)}] of its frame within 0x${MDA_BODY.toString(16)} bytes`);
+  const first = named ? loadsIn(procLoads, entry, end)[0] : null;
+  let newCall = named ? callAt(img, next(next(first))) : null;
+  if (named && !newCall) throw new Error(`${rule}: the handler's allocation at ${D(first)} calls no operator new`);
   // its sends to the camera base
   const traced = new Set(), posts = new Set();
   for (let p = entry; p < end; p++) {
@@ -3259,9 +3275,7 @@ export function mediaHls(img, storage = fileSystem(img)) {
   }
   const post = one([...posts]), sites = [], other = [];
   if (post !== null) for (const c of callsWhere(img, (t) => t === post)) if (c.at >= entry && c.at < end) (traced.has(c.at + c.len) ? sites : other).push(0x50000000 + c.at + c.len);
-  const starts = [];
-  for (let o = img.indexOf(0x43); o >= 0; o = img.indexOf(0x43, o + 1)) if (bytesAt(img, o, MDA_START(img[o + 1])) && loadsIn(procLoads, o, o + MDA_FILE).length) starts.push(o);
-  const start = one(starts);
+  const start = one(named ? openings.filter((o) => loadsIn(procLoads, o, o + MDA_FILE).length) : openings);
   // the reception's creator and its synchronous slot
   const recLoads = loads(fileAt(MDA_RECEPTION_FILE));
   const syncOf = (ctor) => {
@@ -3279,9 +3293,28 @@ export function mediaHls(img, storage = fileSystem(img)) {
     return slot === null ? null : { slot, vt };
   };
   // a heap singleton (E122): the creator allocates it with the class's file
-  let creator = one([...recLoads].map((p) => p - 12).filter((e) => bytesAt(img, e, [0xfc, 0xa0, null, null, null, null, 0xb0, 0x00, 0xc9, null, 0x80, null])));
+  let creator = named ? one([...recLoads].map((p) => p - 12).filter((e) => bytesAt(img, e, [0xfc, 0xa0, null, null, null, null, 0xb0, 0x00, 0xc9, null, 0x80, null]))) : null;
   let syncSlot = null;
-  if (creator !== null) {
+  if (!named) {
+    // nameless: of the heap singletons' creators, `mov (S),a0; cmp 0,a0; bne; mov n,d0; call NEW; ...; call CTOR`, the
+    // one whose class has the synchronous slot; NEW is operator new
+    const found = [];
+    for (let e = img.indexOf(0xfc); e >= 0; e = img.indexOf(0xfc, e + 1)) {
+      if (!bytesAt(img, e, [0xfc, 0xa0, null, null, null, null, 0xb0, 0x00, 0xc9, null, 0x80, null])) continue;
+      let at = e + 12, nw = callAt(img, at);
+      for (let n = 0; n < 2 && !nw && !isRet(img, at); n++) { at = next(at); nw = callAt(img, at); }   // (a named build's `mov FILE,a0; mov LINE,d1`)
+      if (!nw) continue;
+      let ctor = null;
+      for (let p = at + nw.len, n = 0; n < 8 && ctor === null && !isRet(img, p); n++, p = next(p)) {
+        const c = callAt(img, p);
+        if (c && c.to !== nw.to) ctor = c.to;
+      }
+      const sync = syncOf(ctor);
+      if (sync !== null) found.push({ e, slot: sync.slot, nw });
+    }
+    if (found.length !== 1) return undefined;
+    creator = found[0].e; syncSlot = found[0].slot; newCall = found[0].nw;
+  } else if (creator !== null) {
     let ctor = null;
     for (let p = next(next(next(creator + 12))), n = 0; n < 8 && ctor === null; n++, p = next(p)) {
       const c = callAt(img, p);
@@ -3308,8 +3341,10 @@ export function mediaHls(img, storage = fileSystem(img)) {
   // the one its sends give the mount states 2, 4 and 8 (`mov N,a1` within the five bytes before a call, E122
   // 0x5076f37b, 0x5076f426, 0x5076f48e); with that allocation's size
   const ctors = new Map();
-  for (const p of loads(fileAt(MDA_MANAGER_FILE))) {
-    const size = img[p - 2] === 0x80 ? img[p - 1] : null, at = next(next(p)), nw = callAt(img, at);
+  // (nameless: after any `mov n,d0; call NEW`)
+  const news = named ? [...loads(fileAt(MDA_MANAGER_FILE))].map((p) => [p, next(next(p))]) : callsWhere(img, (t) => t === newCall.to).map((c) => [[0, 6, 9, 11].map((k) => c.at - k).find((q) => img[q - 2] === 0x80) ?? c.at, c.at]);
+  for (const [p, at] of news) {
+    const size = img[p - 2] === 0x80 ? img[p - 1] : null, nw = callAt(img, at);
     if (size === null || nw?.to !== newCall.to) continue;
     for (let q = next(at); q < p + MDA_SEND; q = next(q)) {
       const c = callAt(img, q);

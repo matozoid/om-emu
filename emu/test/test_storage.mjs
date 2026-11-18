@@ -1011,7 +1011,10 @@ async function hlsOutIn(card, tag, ok, bad, notes) {
 // Menu's first row, five tabs down; Card Setup offers All Erase and Format while the card holds a picture, and the
 // confirm's cursor is on No (X, the walker's notes). The path is checked by what the application does at its end: the
 // media control's start with the format's command, which S-MDAEND reads where the application makes it
-const familyPress = (s, k) => { s.key(k, 'down'); s.camapp.pump(); s.idle_slice(s.lab.lab_time() + 150e6); s.key(k, 'up'); s.camapp.pump(); s.idle_slice(s.lab.lab_time() + 600e6); };
+// (a press's waits end where the application starts the media control: E113's format of the blank card is over 600 ms
+// after Yes, X 2026-11-18, and the test looks at the lab while the format runs)
+const familyWait = (s, ns) => { for (let t = s.lab.lab_time() + ns; s.lab.lab_time() < t && s.camapp.media.mda === null;) s.idle_slice(Math.min(t, s.lab.lab_time() + 10e6)); };
+const familyPress = (s, k) => { s.key(k, 'down'); s.camapp.pump(); familyWait(s, 150e6); s.key(k, 'up'); s.camapp.pump(); familyWait(s, 600e6); };
 const familyPlayer = async (card) => {
   const { loadImage, loadBlock, loadNand, createHash } = await import('../checks/lib/env.mjs');
   const { Player } = await import('../src/lab/player.mjs');

@@ -1368,12 +1368,13 @@ export const MODELS = {
     // rear LCD 3.0" 1.037M dots; EVF (VF-4-class) ~1.44M dots
     panels: { tft: [720, 480], evf: [800, 600] },
     card_fs: {
-      native: false,
-      // the cross-build map does not place E113's file-system seams: src/fw/facts.mjs fileSystem reads none of them,
-      // so FACTS[E113] carries no `storage` and the lab has nothing to drive a native card FS with. S-CARD keeps the
-      // card without one (src/lab/camapp.mjs), pending E113 storage RE (the E118 family's forms, read in E122's code).
-      why: 'E113 file-system seams not placed by the cross-build map (no storage fact); card kept without a native FS',
-      hls: 'rule',
+      native: true, hls: 'rule',
+      // the file system natively at the seams src/fw/facts.mjs fileSystem reads (fact storage; its free count holds no
+      // cache flush, cflush null), and the HLS media side as the E118 family's, at the addresses mediaHls reads by its
+      // nameless forms (E113's image names no OlyHfwOpeMdaCtrl or CapMed_MediaManager source file, D; the media
+      // control is there all the same: X 2026-11-18, a Format ran natively to its end and the application then sent
+      // the camera base its two events, 12986 and the closure's 12965, from 0x5063ef10 and 0x5063f034, and stayed
+      // on "Busy" until the lab answered them, S-MDAEND)
     },
     rec_native: false,
     // core_byte: the board-identity byte the lab's core-id getter returns (src/fw/facts.mjs coreByte, src/lab/hle.mjs
@@ -1446,6 +1447,14 @@ export const MODELS = {
       // Without it the GUI's 10 ms tick (the OS layer's cyclic 10) never runs and a value popup's OK waits for ever
       // on its 100 ms timer (docs/om1-menu-spec.md section 13). E113-only: the family's other bodies have the unit
       // (docs/model-survey.md finding 155) but their IRQs are not read
+      // timer2's evidence (D, E113 disassembly addresses): the driver's channel table 0x7d998830 (15 records of 12 bytes:
+      // the channel's register pointer, its IRQ, its handler) and mask table 0x7da64808 (15 records: status pointer, IE
+      // pointer, bit). The start 0x50051072 writes the bit to the status, ORs it into the IE and writes ctl 1; the stop
+      // 0x500510a1 clears the IE bit, writes ctl 0 and the bit to the status; the ISR 0x500511d4 reads status & bit, stops
+      // the channel, writes the bit to the status and, for a timer with counts left or a periodic one (kind 128), writes
+      // the reload and starts it again; the init 0x50005ab9 writes 0 to +8, which the driver does not read. hz (I): the
+      // 2 ms service loads 0x21 = 33 counts (32.8 at 16384 Hz; the count conversion 0x5005b37c takes its rate from
+      // 0x5005affb, whose sources are 32768 Hz and 24 MHz); the reload is at most 1023 (0x5005104b).
       timer2: { base: 0x9B800010, channels: 15, stride: 12, status: 0x9B8000C4, ie: 0x9B8000DC, hz: 16384,
         groups: [[0, 9, 24], [10, 10, 25], [11, 11, 26], [12, 12, 27], [13, 13, 28], [14, 14, 29]] } },
     // boot_seeds (src/lab/menu.mjs bring_up H-E113SEED): [addr, value, width] the lab writes to DRAM before the firmware

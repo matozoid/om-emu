@@ -1,21 +1,13 @@
 // The second timer unit (board timer2), on which the E118 family's software-timer driver counts (docs/model-survey.md
 // finding 155: every software timer of the family, the GUI's 10 ms Genifa tick among them, stood still without it).
-// Read on E113 (D, disassembly addresses): the driver's two tables name the registers. The channel table 0x7d998830
-// (15 records of 12 bytes: the channel's register pointer, its IRQ, its handler) gives channel n the words
-// base + 12 n: ctl +0, reload +4, +8 (written 0 by the init 0x50005ab9, not read by the driver); the mask table
-// 0x7da64808 (15 records: status pointer, IE pointer, bit) gives channels 0..9 bits 0..9 of status 0x9b8000c4 / IE
-// 0x9b8000dc on one IRQ and channels 10..14 bit 0 of their own status / IE words (0x9b8000c8.. / 0x9b8000e0..) on the
-// next five IRQs. The start (0x50051072) writes the bit to the status, ORs it into the IE and writes ctl 1; the stop
-// (0x500510a1) clears the IE bit, writes ctl 0 and the bit to the status; the ISR (0x500511d4) reads status & bit,
-// stops the channel, writes the bit to the status and, for a timer with counts left or a periodic one (kind 128),
-// writes the reload and starts it again. So (A-TMR2-1, I): ctl bit 0 runs the channel, the status bit is set at each
-// expiry and cleared by writing 1, and a line is high while status & IE of its group is not 0.
-// A-TMR2-2 (I): a running channel expires every `reload` counts of the unit's clock, 16384 Hz: the driver's 2 ms
-// service loads 0x21 = 33 counts (2000 us at 16384 Hz is 32.8; the count conversion 0x5005b37c takes its rate from
-// 0x5005affb, whose sources are 32768 Hz and 24 MHz), and its reload is at most 1023 (0x5005104b), a 10-bit counter.
-// The period is not measured on a camera. Any other width, and a debugger write, are UNKNOWN; a read of +8 answers
-// the counts left. Built by the machine on a board that gives timer2 (src/machine.mjs), before the stub, whose page
-// 0x9b800000 holds the block's neighbours.
+// The registers, the driver's routines that name them and the count rate are read on E113; the evidence and the
+// firmware addresses are with the board fact (src/fw/models.mjs E113 board.timer2: this file is scanned by
+// bin/port.mjs for E143 addresses, so it names none of another body's). The model (A-TMR2-1, I): channel n has ctl
+// (+0), reload (+4) and a third word (+8) at base + stride n; ctl bit 0 runs the channel, its status bit is set at
+// each expiry and cleared by writing 1, and a group's line is high while its status & IE is not 0. A-TMR2-2 (I): a
+// running channel expires every `reload` counts of the unit's clock (cfg.hz; not measured on a camera). Any other
+// width, a ctl value above 1 and a debugger write are UNKNOWN; a read of +8 answers the counts left. Built by the
+// machine on a board that gives timer2 (src/machine.mjs), before the stub, whose page holds the block's neighbours.
 import { BUS, K_MMIO, addRegion, ctx } from '../core/mem.mjs';
 import { CLOCK_NONE } from './timer.mjs';
 

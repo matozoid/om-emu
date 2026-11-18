@@ -238,7 +238,7 @@ export class Storage {
       else lab.hook(send, sw((h, r) => lab.passthrough(r)), 'S-SDSWITCH');
     }
     if (f.album_init !== null) lab.hook(f.album_init, (h, r) => { this.log.push(['albm', `drive ${r.d0 & 0xFF}: not started`]); h.finish(r, { d0: 0 }); }, 'S-ALBM');
-    lab.wrap(K_CFLUSH, (prev) => (h, r) => {
+    if (f.cflush !== null) lab.wrap(K_CFLUSH, (prev) => (h, r) => {
       if (disasm(r.mdr) !== f.cflush) return prev(h, r);
       this.flushes += 1;
       return h.finish(r);
