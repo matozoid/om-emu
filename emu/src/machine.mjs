@@ -11,6 +11,7 @@ import { run, resetInterp, configureInterp, setBreakpoints, setWatch, windowRema
 import { Intc, setIrqTrace } from './dev/intc.mjs';
 import { snapshotDevices, restoreDevices, devicesBytes } from './debug/snapshot.mjs';
 import { Clock, Timer } from './dev/timer.mjs';
+import { Timer2 } from './dev/timer2.mjs';
 import { Vsc } from './dev/vsc.mjs';
 import { Bus } from './dev/bus.mjs';
 import { Engine } from './dev/engine.mjs';
@@ -196,6 +197,9 @@ export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 10
   // the image library's pipeline block and the JPEG codec, on a board that gives them (src/dev/imgpipe.mjs; passive
   // until the firmware writes them), after the imgpro unit
   const imgpipe = boardKnows('imgpipe') ? new ImgPipe(m, lclock, intc, bus, BOARD.imgpipe) : null;
+  // the second timer unit, on a board that gives it (src/dev/timer2.mjs: the E118 family's software timers), the
+  // last of the lab clock's sources
+  const timer2 = boardKnows('timer2') ? new Timer2(m, lclock, intc, BOARD.timer2) : null;
   const stub = new Stub(m);
   // every set_irq(true) kicks the CPU (S.kick: the next TB start looks, interp.mjs)
   intc.connect((requested) => { S.irqReq = requested; if (requested) S.kick = true; else S.irqWait = false; });
@@ -278,7 +282,7 @@ export function createMachine({ rom, dramBytes = BOARD.dram_size, insnLimit = 10
   const limitStop = () => { const f = limitFault(); trap(f); return f.code === 7 ? { kind: 'limit', code: 7 } : { kind: 'fault', code: f.code }; };
   Object.assign(m, {
     cores,
-    devices: { intc, timer, engine, vsc, bus, stub, scpu, clock: lclock, ...(hdmiPort ? { hdmi: hdmiPort } : {}), ...(audioPort ? { audio: audioPort } : {}), ...(linkPins ? { linkpins: linkPins } : {}),
+    devices: { intc, timer, engine, vsc, bus, stub, scpu, clock: lclock, ...(timer2 ? { timer2 } : {}), ...(hdmiPort ? { hdmi: hdmiPort } : {}), ...(audioPort ? { audio: audioPort } : {}), ...(linkPins ? { linkpins: linkPins } : {}),
       ...(lensSsc ? { lens: lensSsc } : {}), ...(dpc ? { dpc } : {}), ...(dml ? { dml } : {}), ...(pdt ? { pdt } : {}), ...(ems1 ? { ems1 } : {}),
       ...(imgpro ? { imgpro } : {}), ...(imgpipe ? { imgpipe } : {}) },
     getRegs() { live(); return getRegs(); },

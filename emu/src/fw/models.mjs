@@ -1439,7 +1439,15 @@ export const MODELS = {
     // no port block) -> scpu.read throws BUS (fault 2). Back 0xa0 as plain storage so the RMW reads back what it writes.
     // STAND-IN: one port word as storage, not the SCPU event-port/level semantics (E143-family's events at 0xa0..0xb8
     // can't be grafted -- E118 puts its clock at 0x98, colliding with that family's events.pending). E113-only.
-    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 }, scpu: { storage: [[0x00, 0x94], [0xa0, 0xa0]] } },
+    board: { family: 'E118', core_byte: 0x8ff00188, bus_ram: [[0xBFF80000, 0x80000]], buswin_pads: true, engine: { word22: true }, dram_chip: 512 << 20, display_planes: { base: 0x40060000, size: 0x40000 }, scpu: { storage: [[0x00, 0x94], [0xa0, 0xa0]] },
+      // timer2 (src/dev/timer2.mjs, with the evidence there): the second timer unit the software-timer driver counts
+      // on, read from E113's channel table 0x7d998830 and mask table 0x7da64808 (X: the lab's dump of both after the
+      // boot; channel 0 runs the driver's 2 ms service, ctl 1, reload 0x21, IE bit 0, IRQ 24 attached at level 3).
+      // Without it the GUI's 10 ms tick (the OS layer's cyclic 10) never runs and a value popup's OK waits for ever
+      // on its 100 ms timer (docs/om1-menu-spec.md section 13). E113-only: the family's other bodies have the unit
+      // (docs/model-survey.md finding 155) but their IRQs are not read
+      timer2: { base: 0x9B800010, channels: 15, stride: 12, status: 0x9B8000C4, ie: 0x9B8000DC, hz: 16384,
+        groups: [[0, 9, 24], [10, 10, 25], [11, 11, 26], [12, 12, 27], [13, 13, 28], [14, 14, 29]] } },
     // boot_seeds (src/lab/menu.mjs bring_up H-E113SEED): [addr, value, width] the lab writes to DRAM before the firmware
     // runs, standing in for native init blocks the lab does not drive. Each is a documented E113 stand-in, NOT a HW
     // byte-match -- see docs/om-emu/e113-boot-walls.md. E113-only (no other model defines boot_seeds).
