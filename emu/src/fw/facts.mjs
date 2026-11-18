@@ -5033,6 +5033,27 @@ export function funcDirect(img) {
   if (found.length > 1) throw new Error(`funcDirect: function direct starts at ${found.map((f) => h8(f.run)).join(', ')}, want one`);
   return found[0];
 }
+// The strobe module's request (fact 'strobe'; src/lab/camapp.mjs S-STBREQ). D on E113: the request 0x501f2cd4
+// (d0 the request 256..262, a0 a completion callback or 0, a1 its argument) takes the module's semaphore, checks the
+// request (0x501f3d55), sends 16 bytes to the strobe task's queue and, with no callback, receives the 12-byte reply
+// with no timeout (0x501f2dbf), so its caller waits on the strobe task (entry 0x501f24bc, the task whose loop takes
+// the request at 0x501f264d); it returns 0 either way. The two forms are named by the error codes the module logs:
+// 0x230001ff (the callback ring full) once, in the request, and 0x23000101 (a send or receive that failed) twice, in
+// the request and in the task's loop (`serve`, the load there: the lab finds the task as the one whose entry is the
+// nearest below it). E120 has both forms at the same distance (0x50294a92, the loads 0x9d apart as E113's). A body
+// without the first code has no fact.
+const STB_RING_FULL = 0x230001FF, STB_IO_FAILED = 0x23000101, STB_REQUEST_SPAN = 0x100;
+export function strobeRequest(img) {
+  const full = loadsOf(img, STB_RING_FULL);
+  if (!full.length) return undefined;
+  const failed = loadsOf(img, STB_IO_FAILED);
+  if (full.length !== 1 || failed.length !== 2) throw new Error(`strobeRequest: ${h8(STB_RING_FULL)} loaded ${full.length} times, ${h8(STB_IO_FAILED)} ${failed.length} times, want 1 and 2`);
+  const request = entryOf(img, full[0], STB_REQUEST_SPAN);
+  if (request === undefined) throw new Error(`strobeRequest: no called entry within ${STB_REQUEST_SPAN} bytes before the load at ${h8(0x50000000 + full[0])}`);
+  const inside = failed.filter((o) => o > request && runsTo(img, request, o));
+  if (inside.length !== 1) throw new Error(`strobeRequest: ${inside.length} of the ${h8(STB_IO_FAILED)} loads in the request ${h8(0x50000000 + request)}, want 1`);
+  return { request: 0x50000000 + request, serve: 0x50000000 + failed.find((o) => o !== inside[0]) };
+}
 
 // The PC state's USB-disconnect power-off (fact 'power_off.usb_disconnect'; S-NOPOWEROFF stepped over it through
 // MODEL_INFO.call_skips until the idle image's switch states kept the starts out of the PC state, src/fw/models.mjs,
@@ -5857,6 +5878,8 @@ export function readFacts({ img, family, resLoad }) {
   if (slots !== undefined) facts.card.slots = slots;
   const media = mediaHls(img, storage);
   if (media !== undefined) facts.media = media;
+  const strobe = strobeRequest(img);
+  if (strobe !== undefined) facts.strobe = strobe;
   facts.recorder = recorder(img);
   facts.dcf = { counts: dcfCounts(img) };
   facts.erase = pictureErase(img);

@@ -796,6 +796,7 @@ export const CAMAPP_STAND_INS = {
   "A-SCPUM4-1": "(OM_EMU_SCPU=native) the sub-CPU's time runs in step with lab time: before it takes an input of the MN's (a pin, a transfer) it runs up to the lab time of that input, and at the MN's idle points up to the lab's now; each input also opens an answer window of 50 ms of its own time (0.5 s after its power-on or reset) in which it runs on at the idle points while lab time stands still, stopping at each change of its link lines, which reach the MN one per idle point (A-SCPUDEV-1's order); a transfer's bytes pass its SPI2 at the link's clock, eight bit times of its own each, in zero lab time. The windows let it boot and answer while the MN waits on it in zero lab time and stay short of its command manager's 1000-tick monitor",
   "A-SCPUM4-2": "(OM_EMU_SCPU=native) a link line the sub-CPU does not drive (its pin not an output, an open-drain 1, the reset held) reads as S-SCPUDEV's lines while its reset is held: pin 102 low, the message line high; what the board makes of a released pin is ?",
   "A-SCPUM4-3": "(OM_EMU_SCPU=native) MN pin 107 high holds the sub-CPU's NRST low, S-SCPUDEV's polarity: a pin reset of the STM32L4 that keeps its backup domain (the RTC, the backup registers) and its SRAM; the sub-CPU is powered on at the link's start with a blank backup domain (the camera's has run since its battery went in, ?)",
+  "S-STBREQ": "(a body with the strobe module's request, src/fw/facts.mjs strobeRequest, fact 'strobe': E113 and E120 of the unpacked bodies) a synchronous request to the strobe module (its request function with no completion callback: a flash setting's change, as the menu's Reset makes for each of them; the addresses are with the rule) answered 0 at once while the strobe task is dormant: the boot's user start starts that task and the lab, ending the init task, does not, so the request's receive of the task's reply (no timeout) held the GUI task for good, the menu's Reset > Yes staying on the screen with every key dead (X, E113 and E120). The request is not sent, the module's own check of it (its pending state) is not run, and nothing of the flash is modelled: the setting the application wrote is its own. A request with a callback runs natively (it does not wait). A-STBREQ-1 (I): the strobe task's reply to a setting's change carries nothing its caller reads (D: the request returns 0 whatever the reply holds).",
   "S-MOVRATE": "(a body whose movie record time divides by the movie info's frame rate without a test: E118, X) the MN103's DIVU by 0, whose quotient the manual leaves undefined (emu/FIDELITY-NOTES.md 3.2): the rate is the movie recorder's set-up's, which runs on CPU 2 at a movie take's start or a movie's playback, so it is 0 on the camera too until then (docs/model-survey.md finding 59). While it is 0 the divide is not executed, its quotient taken as 0, and the record time runs on natively and fills its block; the quotient goes only to the block's +20, which two of the query's seven callers read, neither met in the lab's start. What the camera's quotient is, ?",
   "S-LONGTIMER": "the system timer module's long timers (1000 ms and more, set through api_system.c 0x5041fd71 / 0x5041fd0d by the HLS timer service): when one is due in lab time the module's event 0x03010000 | number is published, as the module would",
   "S-BOOTDONE": "the HLS components' boot completion: the camera base (Cab_CameraBase) and the still-shooting category wait in their state 3 for event 415, which the application's HighLevel init sends as TRA 415 through the transaction exec (X), and S-TRAACK answers at the exec; S-BOOTDONE dispatches 415 to each waiting there, and 420 (the shooting mode) to the camera base waiting in its state 11, so the shoot mode, the category and Cmp_ShootingComponent are created and run on the OXF main thread (HIGHLEVEL_MAIN, started by S-CAMAPP). The component's sub-CPU status read (0x5012b8b7) returns 0. Not installed under control camapp 3, where the transaction path runs natively and the application's own TRA 415 and the mode change's 420 bring the camera base to its state 13 and the category to its state 11 (X)",
@@ -837,6 +838,7 @@ export class CamApp {
     this.reactive = null;
     this.timed = [];           // [due lab ns, CBS name, param] posts
     this.long_timers = new Map();   // S-LONGTIMER: timer number -> due lab ns
+    this.strobe_requests = [];      // S-STBREQ: the synchronous strobe requests answered while its task is dormant
     this.movie_rate_answered = 0;   // S-MOVRATE: the record time's calls answered while the frame rate is 0
     this.funcs = [];           // function direct ids the application started in the step
     this.recording = null;     // the lab ns a recording started, or null
@@ -889,6 +891,28 @@ export class CamApp {
     this.shooting = false;     // S-RELSEQ: the shooting service runs
     // S-SHUTTERSND (shuttersnd.mjs): the mechanical shutter's sound at each release, where the host plays sound
     this.shutter_sound = session.audio ? new ShutterSound(session.audio) : null;
+  }
+  // S-STBREQ: the strobe module's synchronous request (f.request, no callback in a0) answered 0 while the strobe task,
+  // the static task whose entry is the nearest below the task loop's site f.serve, is dormant
+  _install_strobe(f) {
+    const STB_TASK_SPAN = 0x1000;   // E113's loop site is 0x1f5 past its task's entry, E120's 0x7c5 (X)
+    const lab = this.s.lab;
+    let tid = null;
+    const dormant = () => {
+      const tasks = lab.nk.tasks();
+      if (tid === null) {
+        const below = [...tasks].filter(([, [entry]]) => entry <= f.serve).sort((x, y) => y[1][0] - x[1][0])[0];
+        if (!below || f.serve - below[1][0] > STB_TASK_SPAN) throw new FirmwareError(`S-STBREQ: no task entry within ${STB_TASK_SPAN} bytes below the strobe task's loop site ${hex(f.serve)} (nearest ${below ? hex(below[1][0]) : 'none'})`);
+        tid = below[0];
+      }
+      return tasks.get(tid)[1] === 'DMT';
+    };
+    lab.hook(f.request, (h, r) => {
+      if ((r.a0 >>> 0) !== 0 || !dormant()) return lab.passthrough(r);
+      this.strobe_requests.push(r.d0 & 0xffff);
+      if (this.strobe_requests.length === 1) this.log.push(['strobe', `synchronous request ${r.d0 & 0xffff} from ${where(r.mdr)} answered 0: the strobe task ${tid} is dormant`]);
+      lab.finish(r, { d0: 0 });
+    }, 'S-STBREQ');
   }
   // S-CAMAPP: run inside the session's step 'camapp start'.
   start() {
@@ -1224,6 +1248,7 @@ export class CamApp {
     // and S-PLAYDEC stands in for one with a pre-reduction
     if (this.play_native) { this.module_queues.delete(apiQueues().PLAY_EXEC); this.play_native.install(); }
     if (this.s.storage?.f.hls) { this.media = new HlsMedia(this.s, this.s.storage); this.media.install(); }   // its HLS side (card_fs.hls)
+    if (fact('strobe', undefined)) this._install_strobe(fact('strobe', undefined));                    // S-STBREQ
     this.s.lab.panel_done = true;                                                  // S-PANELDONE (menu.mjs)
     const lab = this.s.lab;
     lab.xcpu_served.add(CPU3);                                                     // S-CPU3: S-CPU2 leaves bank 3 to drain_cpu3
