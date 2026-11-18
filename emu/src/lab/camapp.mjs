@@ -593,7 +593,9 @@ const SYNC_ERASE = new Map([[265, 'PlayRecord::erase']]);
 // component reads the counts again and keeps its index, or takes the count where the index is past it (0x50bc09e6).
 // fact 'erase' (src/fw/facts.mjs pictureErase): the two API entries per body, null where the rule reads none
 const ERASE_DRIVE = 0, ATTR_PROTECT = 1, ERASE_PROTECTED = 0xF000003A;
-const eraseFacts = () => fact('erase', ERASE_E143) ?? null;
+// the picture file API's erase calls: the id form's (fact 'erase'), else, where the body gives erase_by_name, the name
+// form's (fact 'erase_named', src/fw/facts.mjs pictureEraseNamed)
+const eraseFacts = () => fact('erase', ERASE_E143) ?? (MODEL_INFO.erase_by_name === true ? fact('erase_named', undefined) : null) ?? null;
 // The play requests that save a file an edit made (finding 141, D: each id by its sender's trace on E143, the same
 // on the 19 bodies; OlyHfwOpeEdtMov::save's 533 and 535 on E134, E125, E130, E145, E133, E129 and E132 alone, E125
 // 0x50823ab5 and 0x50823ac2): the lab runs no edit, so one finished as every request is would report a file that was
@@ -1643,7 +1645,8 @@ export class CamApp {
   // S-PLAYSEQ: the card's pictures in the order the play module gives them, {folder, number}: with the DCF database
   // its fnode of each index (storage.mjs fnode), else S-CARD's list
   card_list() {
-    if (!this.dcf_db()) return this.images;
+    // (dcf_remount: the database knows the fileif pictures too, each with its attribute)
+    if (!this.dcf_db() && !(MODEL_INFO.dcf_remount && MODEL_INFO.erase_by_name)) return this.images;
     const n = this.card_images(), out = [];
     for (let i = 1; i <= n; i++) {
       const p = this.s.storage.fnode(i);
@@ -1713,7 +1716,7 @@ export class CamApp {
   erase_native() { return this.erase_unnative() === null; }
   erase_unnative() {
     if (eraseFacts() === null) return `the rule reads no picture file API's erase calls in ${MODEL}'s build (docs/model-survey.md finding 140)`;
-    if (!this.dcf_db()) return `${MODEL}'s DCF database learns of the lab's pictures only at a mount, so its index is not the picture's (finding 140)`;
+    if (!this.dcf_db() && !MODEL_INFO.dcf_remount) return `${MODEL}'s DCF database learns of the lab's pictures only at a mount, so its index is not the picture's (finding 140)`;
     return null;
   }
   erase_facts() { return eraseFacts(); }
@@ -1742,6 +1745,12 @@ export class CamApp {
     this.play_list = this.card_list();
     const n = this.play_list.length;
     if (n !== n0 - 1) throw new FirmwareError(`H-OBJDEL: the DCF database counts ${n} pictures after the object delete of ${name}, ${n0} before`);
+    // where the lab keeps the list (no dcf_db: the database read the pictures at dcf_remount's mounts), the firmware's
+    // own count of the pictures is held to the list's
+    if (!this.dcf_db()) {
+      const fw = lab.sim.u32(DCF_COUNTS + 4 + 4 * IMAGE_TYPE) >>> 0;
+      if (fw !== n) throw new FirmwareError(`H-OBJDEL: the DCF database counts ${fw} pictures after the object delete of ${name}, the lab's list ${n}`);
+    }
     this.play_cur = n ? Math.min(this.play_cur, n - 1) : null;
     // S-PLAYVIEW: with none left the plane no longer holds the erased picture's frame, as at a play start with none (I)
     if (this.play_cur === null) s.scene_playview?.(null);

@@ -31,8 +31,9 @@ import zlib from 'node:zlib';
 // the bodies whose eraseCurrent runs natively (X, 2026-11-11; the rule's calls and REC_FILE's or the recorder's
 // registration in the DCF database, src/lab/camapp.mjs erase_native), held strictly both ways; E130, E133, E129 and
 // E122 since REC_FILE runs natively there too (e130-recfile, e118-recfile; X at the round's merge: their DCF database
-// holds the session's pictures; E118 and E120 have no erase fact)
-export const ERASE_NATIVE = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E139', 'E134', 'E137', 'E142', 'E140', 'E125', 'E130', 'E133', 'E129', 'E122']);
+// holds the session's pictures; E118 and E120 have no erase fact); E113 by the name form's calls (fact erase_named,
+// src/fw/models.mjs erase_by_name) with the pictures in the database by dcf_remount's mounts (X, 2026-11-18)
+export const ERASE_NATIVE = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E139', 'E134', 'E137', 'E142', 'E140', 'E125', 'E130', 'E133', 'E129', 'E122', 'E113']);
 // the bodies whose Delete in playback opens the erase dialog in the lab (X; finding 138 for E143 and, with the media
 // status at the word the setter's SD case stores, E137 and E125, finding 111 for the others), held strictly: on a
 // body outside them Delete is pressed and must open nothing (or, on NO_DELETE_KEY's, be refused by the player), and on
@@ -56,7 +57,10 @@ export const NO_DELETE_KEY = new Set(['E145', 'E129', 'E132']);
 // the others S1 and S2 release nothing there, with or without an erase (X: PLAY and PLAY again with no picture on
 // E142; not the erase's, open), so the next picture's number is not taken there. E122's starts again (X, finding 155:
 // 100-0001 in a new folder, as E143's)
-export const SHOOTS_AFTER_PLAY = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E139', 'E134', 'E125', 'E122']);
+// the bodies whose pictures the lab's file interface names (no native recorder): the number after an emptied card is the
+// interface's next, not the delete mount's
+export const FILEIF_NUMBERS = new Set(['E113']);
+export const SHOOTS_AFTER_PLAY = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E139', 'E134', 'E125', 'E122', 'E113']);
 const START_KEYS = { E132: ['up', 'ok', 'up', 'ok', 'up', 'ok', 'up', 'ok', 'up', 'ok'] };
 const WIZARD = 'SS_MENU_MAIN/ID_ST_WIZARD_MENU_ENTRY', SINGLE = 'SS_PLAY_SINGLE/ID_ST_DISP_SIMPLE', NONE = 'SS_PLAY_SINGLE/ID_ST_NO_PICTURE';
 // FILECLBK's codes of the DCF edit's lock and unlock of one object (DCFED_OBJ_LOCK, DCFED_OBJ_UNLOCK: dcfedit's ops 4
@@ -223,7 +227,9 @@ export async function eraseSession() {
   press('s1'); press('s2');
   if (SHOOTS_AFTER_PLAY.has(MODEL)) {
     const c = card(), pic = cam.images[cam.images.length - 1];
-    ok(cam.card_images() === 1 && c.files.size === 1 && pic?.folder === 100 && pic?.number === 1,
+    // (FILEIF_NUMBERS: the lab's file interface names the picture, S-FILEIF, and its count runs on past the erased ones)
+    const next = FILEIF_NUMBERS.has(MODEL) ? 4 : 1;
+    ok(cam.card_images() === 1 && c.files.size === 1 && pic?.folder === 100 && pic?.number === next,
       `${MODEL}: the next picture: ${cam.card_images()} counted, ${[...c.files.keys()].join(' ')} on the card, ${pic?.folder}-${String(pic?.number).padStart(4, '0')}`);
   } else ok(!cam.shooting && cam.card_images() === 0, `${MODEL}: no shooting service after playback (SHOOTS_AFTER_PLAY): ${cam.shooting ? 'it runs' : 'none'}, ${cam.card_images()} counted`);
   // the requests S-PLAYSEQ refuses, each at its execute as the observer meets it (an RSB with that request)

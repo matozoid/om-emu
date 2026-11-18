@@ -3482,16 +3482,47 @@ export function pictureErase(img) {
   const fn = (id, what, has) => {
     const load = oneAt(img, [0xfc, 0xcc, ...le32(id)], rule, `loads of the API id 0x${id.toString(16)} in d0`);
     if (load === null) return null;
-    const { to } = callScan(img);
-    let entry = -1;
-    for (let i = 0; i < to.length; i++) if (to[i] <= load && to[i] > load - API_ENTRY && to[i] > entry) entry = to[i];
-    if (entry < 0) throw new Error(`${rule}: no call target within 0x${API_ENTRY.toString(16)} bytes before the id's load at ${D(load)}`);
-    for (let q = entry; q < entry + API_BODY; q += insnLength(img[q], img[q + 1])) if (has(q)) return 0x50000000 + entry;
-    throw new Error(`${rule}: the function at ${D(entry)} (API id 0x${id.toString(16)}) has no ${what} within 0x${API_BODY.toString(16)} bytes`);
+    return apiEntry(img, rule, load, `API id 0x${id.toString(16)}`, what, has);
   };
-  const del = fn(API_OBJECT_DELETE, "`mov 33,d0` (the DCF edit's object delete)", (q) => img[q] === 0x80 && img[q + 1] === DCFED_OBJ_DEL);
-  const attr = fn(API_ATTRIBUTE, "`movbu (89,aN),dM` (the fnode's attribute)", (q) => img[q] === 0xf8 && (img[q + 1] & 0xf0) === 0x40 && img[q + 2] === FNODE_ATTR);
+  const del = fn(API_OBJECT_DELETE, ERASE_DEL_WHAT, eraseDelHas(img));
+  const attr = fn(API_ATTRIBUTE, ERASE_ATTR_WHAT, eraseAttrHas(img));
   return del === null || attr === null ? null : { object_delete: del, attribute: attr };
+}
+const ERASE_DEL_WHAT = "`mov 33,d0` (the DCF edit's object delete)", ERASE_ATTR_WHAT = "`movbu (89,aN),dM` (the fnode's attribute)";
+const eraseDelHas = (img) => (q) => img[q] === 0x80 && img[q + 1] === DCFED_OBJ_DEL;
+const eraseAttrHas = (img) => (q) => img[q] === 0xf8 && (img[q + 1] & 0xf0) === 0x40 && img[q + 2] === FNODE_ATTR;
+// the entry of the API function whose trace argument is loaded at `load`: the greatest call target within API_ENTRY
+// bytes before the load, with `has` true at one of its whole instructions within API_BODY bytes
+function apiEntry(img, rule, load, of, what, has) {
+  const D = (o) => h8(0x50000000 + o), { to } = callScan(img);
+  let entry = -1;
+  for (let i = 0; i < to.length; i++) if (to[i] <= load && to[i] > load - API_ENTRY && to[i] > entry) entry = to[i];
+  if (entry < 0) throw new Error(`${rule}: no call target within 0x${API_ENTRY.toString(16)} bytes before the load at ${D(load)} (${of})`);
+  for (let q = entry; q < entry + API_BODY; q += insnLength(img[q], img[q + 1])) if (has(q)) return 0x50000000 + entry;
+  throw new Error(`${rule}: the function at ${D(entry)} (${of}) has no ${what} within 0x${API_BODY.toString(16)} bytes`);
+}
+// The same two calls on a build whose picture file API traces its functions by name, not by id (fact 'erase_named';
+// src/lab/camapp.mjs H-OBJDEL where the body gives erase_by_name, src/fw/models.mjs). D on E113 (2014), api_picfile.c:
+// each function opens `mov 1,d0; mov NAME,a0; call` (the trace's enter call with the function's own name, a NUL-
+// terminated string of the image), where the later builds load an id. api_picfile_Erase_Object (d0 drive, d1 the
+// picture's index, a0 the part) builds the same DCF edit request as E143's object_delete: the part's option 4, 2 or 1
+// with the code 40, else the option 0 and `mov 33,d0`, the fnode of the index to the block's +4 and the API's sender
+// with target 17; api_picfile_Get_AttrObject (d0 drive, d1 the index) answers the fnode's byte +89. One load of each
+// name on E113 and on E120, whose functions read alike (X, a byte scan, 2026-11-18). Returns {object_delete,
+// attribute}, or undefined where a name is not in the image or not loaded; throws for a name loaded twice, and as
+// pictureErase for a load without its function.
+const ERASE_NAMES = { object_delete: 'api_picfile_Erase_Object', attribute: 'api_picfile_Get_AttrObject' };
+export function pictureEraseNamed(img) {
+  const rule = 'pictureEraseNamed', { base } = imageBase(img);
+  const fn = (name, what, has) => {
+    const loads = findString(img, name, { nul: true, after: true }).flatMap((o) => loadsOf(img, base + o));
+    if (!loads.length) return undefined;
+    if (loads.length > 1) throw new Error(`${rule}: ${loads.length} loads of the name ${name}, want one`);
+    return apiEntry(img, rule, loads[0], name, what, has);
+  };
+  const del = fn(ERASE_NAMES.object_delete, ERASE_DEL_WHAT, eraseDelHas(img));
+  const attr = fn(ERASE_NAMES.attribute, ERASE_ATTR_WHAT, eraseAttrHas(img));
+  return del === undefined || attr === undefined ? undefined : { object_delete: del, attribute: attr };
 }
 // The HLS media layer's status word of the SD card in the first slot (fact 'media_status', and through bin/port.mjs
 // the place of E143's MEDIA_STATUS_E143; src/lab/camapp.mjs S-CARD's CARD_STATUS; docs/model-survey.md finding 138).
@@ -6006,6 +6037,7 @@ export function readFacts({ img, family, resLoad }) {
   facts.recorder = recorder(img);
   facts.dcf = { counts: dcfCounts(img) };
   facts.erase = pictureErase(img);
+  if (facts.erase === null) { const named = pictureEraseNamed(img); if (named !== undefined) facts.erase_named = named; }
   facts.media_status = mediaStatus(img);
   facts.mount_state = mountState(img);
   const usbOff = usbPowerOff(img);

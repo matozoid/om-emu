@@ -1386,6 +1386,11 @@ export const MODELS = {
     // Playback Menu's Edit, Print Order and Reset Protect, grey with the count 0, are enabled; a second 'dcf lists'
     // request alone left the counts 0 (X)
     dcf_remount: true,
+    // erase_by_name: the play component's eraseCurrent runs natively (src/lab/camapp.mjs H-OBJDEL) through the name
+    // form's calls (fact erase_named, src/fw/facts.mjs pictureEraseNamed: api_picfile_Erase_Object and
+    // api_picfile_Get_AttrObject), the pictures in the DCF database by dcf_remount's mounts. X 2026-11-18:
+    // test/test_erase.mjs on E113
+    erase_by_name: true,
     // core_byte: the board-identity byte the lab's core-id getter returns (src/fw/facts.mjs coreByte, src/lab/hle.mjs
     // core_id, menu.mjs dial select). The coreByte rule wants one leaf getter `movbu (0x8ff0xxxx),d0; retf`; E113 has
     // NONE (the rule returns null, board defers to hand). Measured why: E143's board byte (0x97f00254) is a strap-lookup
