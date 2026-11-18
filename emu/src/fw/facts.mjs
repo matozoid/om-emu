@@ -5136,6 +5136,51 @@ export function mysetLoad(img) {
   return { request: MYSET_LOAD_REQUEST, load: 0x50000000 + loads[0] };
 }
 
+// The lens attach state word that api_rec_Get_LensState answers from (fact 'lens.attach_state'; src/lab/camapp.mjs
+// S-LENS). D on E113: the menu's row enable service (0x506c3c18: an item's list of restriction conditions, each a
+// function of the table 0x7e3b3cd4; a row is greyed when one answers nonzero) greys Pixel Mapping (item 0x800) by
+// condition 118 (0x506c50d9), which asks api_rec_Get_LensState (0x5020bf49) and restricts the row when it answers 0.
+// That API is `mov 1,d0; mov name,a0; call trace; call G; clr d2; extbu d0; cmp d2,d0`, G the getter `movhu (W),d0;
+// extbu d0; retf` of the word W the mount handler writes: 1 on its messages 1 and 4 (a lens attached), 0 on 2 and 3
+// (0x5010eaa8, 0x5010eb08). S-LENS mounts its lens through the driver's record, which does not send those messages,
+// so W stays 0 without this fact. E120's API maps its getter's answer otherwise (1 -> 0x20, 0 -> 0x21) and E143 has
+// no such trace: neither has the fact. Returns W, or undefined; throws for two.
+export function lensAttachState(img) {
+  const { base } = imageBase(img), found = [];
+  for (const s of findString(img, 'api_rec_Get_LensState', { nul: true, after: true })) for (const p of loadsOf(img, base + s)) {
+    const o = p - 2;                                                                  // mov 1,d0; mov name,a0; call; call G
+    if (!bytesAt(img, o, [0x80, 0x01, 0xfc, 0xdc]) || img[o + 8] !== 0xdd || img[o + 15] !== 0xdd || !bytesAt(img, o + 22, [0x08, 0x14, 0xa8])) continue;
+    const g = o + 15 + s32(img, o + 16);
+    if (g < 0 || g + 10 > img.length || !bytesAt(img, g, [0xfc, 0xac]) || !bytesAt(img, g + 6, [0x14, 0xde, 0x00, 0x00])) continue;
+    found.push(u32(img, g + 2));
+  }
+  if (found.length > 1) throw new Error(`lensAttachState: ${found.length} lens state getters`);
+  return found[0];
+}
+
+// The parameter store's flash sectors (fact 'param_store'; src/lab/storage.mjs S-PRMNAND). D on E113: the parameter
+// save 0x50042bd7 (api_rec_Save_Pixelmaping 0x5020d8fe calls it at the end of the menu's Pixel Mapping) saves its two
+// stores, each through a descriptor whose pointer it loads right before the save's call, `mov (W),a0; call save; mov
+// d0,d2; exthu d2; cmp 0,d2; bne; mov ok,a0; bra; mov err,a0`, err the trace "DBG_PRM_PROC_BKRAM_SAVE_ERR" or
+// "DBG_PRM_PROC_EEROM_SAVE_ERR". A descriptor holds its two flash sectors at +4 and +8 (the save alternates between
+// them, 0x50040970) and the store's size at +20 (0x50040844); the EEROM save writes that many bytes, checksummed,
+// to a sector with the NAND access the file system uses (X: 0x10000 bytes at 0xbffea000). Returns the pointer words
+// { bkram: W, eerom: W }, or undefined where a trace or its form is missing; throws for a form found twice.
+export function paramStore(img) {
+  const { base } = imageBase(img), out = {};
+  for (const [key, name] of [['bkram', 'DBG_PRM_PROC_BKRAM_SAVE_ERR\n'], ['eerom', 'DBG_PRM_PROC_EEROM_SAVE_ERR\n']]) {
+    const found = [];
+    for (const s of findString(img, name, { nul: true })) for (const p of loadsOf(img, base + s)) {
+      if (img[p + 1] !== 0xdc || !bytesAt(img, p - 25, [0xfc, 0xa0]) || img[p - 19] !== 0xcd || !bytesAt(img, p - 14, [0x82, 0x1e, 0xaa, 0x00, 0xc9, 0x0a, 0xfc, 0xdc])) continue;
+      found.push(u32(img, p - 23));
+    }
+    if (!found.length) return undefined;
+    if (found.length > 1) throw new Error(`paramStore: ${found.length} saves of the ${key} store`);
+    out[key] = found[0];
+  }
+  return out;
+}
+
 // The microphone level monitor's notifications (fact 'mic_monitor'; src/lab/camapp.mjs S-MICMON). D on E113: the
 // menu's Recording Volume popup starts the monitor with HLS transaction 13530 and stops it with 13531 (the builders
 // `mov id,d0` of the one sender each), registers its callback for class 0x60 and then holds every other GUI event
@@ -6025,6 +6070,10 @@ export function readFacts({ img, family, resLoad }) {
   if (dial !== undefined) facts.dial = dial;
   facts.touch_panel = { driver: touchDriver(img) };
   facts.lens = { mount: lensMount(img) };
+  const attach = lensAttachState(img);
+  if (attach !== undefined) facts.lens.attach_state = attach;
+  const prm = paramStore(img);
+  if (prm !== undefined) facts.param_store = prm;
   facts.iic = { waits: iicWaits(img) };
   const touch = touchI2c(img);
   if (touch !== undefined) facts.touch = touch;

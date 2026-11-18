@@ -41,6 +41,11 @@ export function fact(path, e143) {
   if (read === undefined && hand === undefined) throw new Error(`${MODEL}: neither src/fw/ports.mjs FACTS nor src/fw/models.mjs gives ${path} (E143's is ${typeof e143 === 'object' ? JSON.stringify(e143) : e143})`);
   return read ?? hand;
 }
+// A fact only some bodies have (a rule of src/fw/facts.mjs that returns undefined where the firmware lacks the thing):
+// the ported body's, or null where its firmware has none, and on the lab's model, whose stand-ins predate it.
+export function factIf(path) {
+  return ON_LAB_MODEL ? null : valueAt(FACTS[MODEL] ?? {}, path) ?? null;
+}
 // (the sentinel keeps the low 24 bits only: the E143 address is the unplaced entry of PORTS with them)
 export function refuseUnmapped(address, what) {
   if (!isUnmapped(address)) return;

@@ -47,6 +47,10 @@
 //               (storage.nand.access): it reads erased (0xff) on a camera that
 //               never saved it (the lab's NAND and flash are not modelled), and the firmware's writes are kept for the
 //               session
+//   S-PRMNAND   the parameter stores' flash sectors (fact param_store: the two sectors of the BKRAM and EEROM
+//               stores' descriptors) behind the same NAND access: a sector reads erased until the firmware has
+//               written it, its writes are kept for the session (D on E113: the menu's Pixel Mapping ends with
+//               the parameter save, 0x10000 bytes to a sector of the EEROM store)
 //   S-ALBM      the album manager's per-drive init (where the rule finds one) returns at once: ALBM_MAIN, which it
 //               would start, sends its first request to the image engine (0x5048ee61 on E143, a kind 14 fill on the
 //               imgpro unit 0x9c600000, whose model S-IMGPRO the IRQ attach of camapp 3's H-IMGPROINIT serves only
@@ -85,7 +89,7 @@ import { RTOS } from './rtos.mjs';
 import { K_CFLUSH } from './menu.mjs';
 import { STUB } from './display.mjs';
 import { SdCard, SECTOR, NO_RESPONSE } from './sdcard.mjs';
-import { A, MODEL, MODEL_INFO, fact } from '../fw/model.mjs';
+import { A, MODEL, MODEL_INFO, fact, factIf } from '../fw/model.mjs';
 import { RecFile, REC_NATIVE } from './rec.mjs';
 import { BOARD } from '../fw/board.mjs';
 import { STORAGE_E143, STORAGE_LIB, CARD_DETECT_E143, CARD_SLOTS_E143, RECORDER_E143, MEDIA_LIB } from '../fw/facts.mjs';
@@ -189,6 +193,8 @@ export class Storage {
     this.pins = null;              // the card-detect pins' levels the lab wrote (f.slots), checked at each later write
     this.nand = new Uint8Array(f.nand.area[1]).fill(ERASED);
     this.nand_writes = 0;
+    this.prm = new Map();                // S-PRMNAND: the parameter stores' written sectors, flash address -> bytes
+    this.prm_writes = 0;
     this.log = [];                 // [kind, detail] of every stand-in action at the bring-up and the insertion
     this.commands = 0;             // SD commands answered
     this.flushes = 0;              // K-CFLUSH calls from the file system answered
@@ -642,6 +648,12 @@ export class Storage {
   _nand(h, r) {
     const sim = this.lab.sim, { area: [base, size], read, write } = this.f.nand;
     const mem = r.a0 >>> 0, flash = r.a1 >>> 0, n = r.d0 >>> 0, op = r.d1 >>> 0, off = flash - base;
+    if ((op === read || op === write) && this._prm_sector(flash, n)) {                // S-PRMNAND
+      if (op === read) sim.write(mem, this.prm.get(flash)?.subarray(0, n) ?? new Uint8Array(n).fill(ERASED));
+      else { this.prm.set(flash, sim.read(mem, n).slice()); this.prm_writes += 1; }
+      this.log.push(['nand', `parameter store: ${op === read ? 'read' : 'write'} ${n} bytes at ${h8(flash)} from ${where(r.mdr)}`]);
+      return h.finish(r, { d0: 0 });
+    }
     if (off < 0 || off + n > size || (op !== read && op !== write)) {
       throw new StorageError(`S-FSNAND: NAND access 0x${op.toString(16)} of ${n} bytes at flash ${h8(flash)} from ${where(r.mdr)}: only the file system's area (${h8(base)}, ${size} bytes) is modelled`);
     }
@@ -649,6 +661,18 @@ export class Storage {
     else { this.nand.set(sim.read(mem, n), off); this.nand_writes += 1; }
     this.log.push(['nand', `${op === read ? 'read' : 'write'} ${n} bytes at +0x${off.toString(16)} from ${where(r.mdr)}`]);
     h.finish(r, { d0: 0 });
+  }
+  // S-PRMNAND: whether [flash, flash + n) is one of the parameter stores' flash sectors (fact 'param_store',
+  // src/fw/facts.mjs paramStore: a store's descriptor holds its two sectors at +4 and +8 and its size at +20); a
+  // sector reads erased until the firmware has written it, and its writes are kept for the session
+  _prm_sector(flash, n) {
+    const sim = this.lab.sim, f = factIf('param_store');
+    if (!f) return false;
+    for (const w of [f.bkram, f.eerom]) {
+      const d = sim.u32(w);
+      if (d && n <= sim.u32(d + 20) && (sim.u32(d + 4) === flash || sim.u32(d + 8) === flash)) return true;
+    }
+    return false;
   }
   // the host keeps the card when the session ends, if the firmware wrote to it
   close() {
