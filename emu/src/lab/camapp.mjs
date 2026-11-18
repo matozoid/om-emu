@@ -797,6 +797,7 @@ export const CAMAPP_STAND_INS = {
   "A-SCPUM4-1": "(OM_EMU_SCPU=native) the sub-CPU's time runs in step with lab time: before it takes an input of the MN's (a pin, a transfer) it runs up to the lab time of that input, and at the MN's idle points up to the lab's now; each input also opens an answer window of 50 ms of its own time (0.5 s after its power-on or reset) in which it runs on at the idle points while lab time stands still, stopping at each change of its link lines, which reach the MN one per idle point (A-SCPUDEV-1's order); a transfer's bytes pass its SPI2 at the link's clock, eight bit times of its own each, in zero lab time. The windows let it boot and answer while the MN waits on it in zero lab time and stay short of its command manager's 1000-tick monitor",
   "A-SCPUM4-2": "(OM_EMU_SCPU=native) a link line the sub-CPU does not drive (its pin not an output, an open-drain 1, the reset held) reads as S-SCPUDEV's lines while its reset is held: pin 102 low, the message line high; what the board makes of a released pin is ?",
   "A-SCPUM4-3": "(OM_EMU_SCPU=native) MN pin 107 high holds the sub-CPU's NRST low, S-SCPUDEV's polarity: a pin reset of the STM32L4 that keeps its backup domain (the RTC, the backup registers) and its SRAM; the sub-CPU is powered on at the link's start with a blank backup domain (the camera's has run since its battery went in, ?)",
+  "S-WIFIMGR": "(a body with the Wi-Fi manager's requests, src/fw/facts.mjs wifiManager, fact 'wifi_manager': E113 and E120 of the unpacked bodies) the Wi-Fi manager's task runs on a CPU the lab has not, and no radio is modelled (docs/a53-spec.md): the start's two cross-CPU calls (the command's send to the manager's queue, the set of pattern 1 of its flag) and the stop's one (pattern 2) are stepped over with 0, and the lab then calls api_network's own callback as the manager would, argument 0: the first (started, GUI event 0x041c0001) after a start, the fourth (stopped, 0x041c0004) after a stop. So the menu's Connection to Smartphone shows its SSID and password page and End Wi-Fi returns; no access point exists, no client ever connects, and none of the other six callbacks comes. Which callback follows which request is X (a walk on E113: with no callback the wizard stays at 'Wi-Fi Starting' / 'Wi-Fi Stopping' for good, as it does after the second or the error callback); that a camera's manager answers a start with exactly this one and argument 0 is I",
   "S-STBREQ": "(a body with the strobe module's request, src/fw/facts.mjs strobeRequest, fact 'strobe': E113 and E120 of the unpacked bodies) a synchronous request to the strobe module (its request function with no completion callback: a flash setting's change, as the menu's Reset makes for each of them; the addresses are with the rule) answered 0 at once while the strobe task is dormant: the boot's user start starts that task and the lab, ending the init task, does not, so the request's receive of the task's reply (no timeout) held the GUI task for good, the menu's Reset > Yes staying on the screen with every key dead (X, E113 and E120). The request is not sent, the module's own check of it (its pending state) is not run, and nothing of the flash is modelled: the setting the application wrote is its own. A request with a callback runs natively (it does not wait). A-STBREQ-1 (I): the strobe task's reply to a setting's change carries nothing its caller reads (D: the request returns 0 whatever the reply holds).",
   "S-MOVRATE": "(a body whose movie record time divides by the movie info's frame rate without a test: E118, X) the MN103's DIVU by 0, whose quotient the manual leaves undefined (emu/FIDELITY-NOTES.md 3.2): the rate is the movie recorder's set-up's, which runs on CPU 2 at a movie take's start or a movie's playback, so it is 0 on the camera too until then (docs/model-survey.md finding 59). While it is 0 the divide is not executed, its quotient taken as 0, and the record time runs on natively and fills its block; the quotient goes only to the block's +20, which two of the query's seven callers read, neither met in the lab's start. What the camera's quotient is, ?",
   "S-LONGTIMER": "the system timer module's long timers (1000 ms and more, set through api_system.c 0x5041fd71 / 0x5041fd0d by the HLS timer service): when one is due in lab time the module's event 0x03010000 | number is published, as the module would",
@@ -839,6 +840,8 @@ export class CamApp {
     this.reactive = null;
     this.timed = [];           // [due lab ns, CBS name, param] posts
     this.long_timers = new Map();   // S-LONGTIMER: timer number -> due lab ns
+    this.wifi_pending = [];         // S-WIFIMGR: 'start' / 'stop' requests whose callback is due
+    this.wifi_requests = [];        // S-WIFIMGR: every request answered
     this.strobe_requests = [];      // S-STBREQ: the synchronous strobe requests answered while its task is dormant
     this.movie_rate_answered = 0;   // S-MOVRATE: the record time's calls answered while the frame rate is 0
     this.funcs = [];           // function direct ids the application started in the step
@@ -892,6 +895,19 @@ export class CamApp {
     this.shooting = false;     // S-RELSEQ: the shooting service runs
     // S-SHUTTERSND (shuttersnd.mjs): the mechanical shutter's sound at each release, where the host plays sound
     this.shutter_sound = session.audio ? new ShutterSound(session.audio) : null;
+  }
+  // S-WIFIMGR: the Wi-Fi manager's cross-CPU calls stepped over with 0; pump() then calls api_network's callback
+  _install_wifi(f) {
+    const lab = this.s.lab;
+    lab.hook(f.send, (h, r) => h.skip_call({ ...r, d0: 0 }), 'S-WIFIMGR');
+    for (const what of ['start', 'stop']) {
+      lab.hook(f[what], (h, r) => {
+        this.wifi_pending.push(what); this.wifi_requests.push(what);
+        this.log.push(['wifi', `the manager's ${what} request at ${where(r.pc)} answered 0 (no CPU runs its task)`]);
+        h.skip_call({ ...r, d0: 0 });
+      }, 'S-WIFIMGR');
+    }
+    this.wifi_callbacks = { start: f.started, stop: f.stopped };
   }
   // S-STBREQ: the strobe module's synchronous request (f.request, no callback in a0) answered 0 while the strobe task,
   // the static task whose entry is the nearest below the task loop's site f.serve, is dormant
@@ -1250,6 +1266,7 @@ export class CamApp {
     if (this.play_native) { this.module_queues.delete(apiQueues().PLAY_EXEC); this.play_native.install(); }
     if (this.s.storage?.f.hls) { this.media = new HlsMedia(this.s, this.s.storage); this.media.install(); }   // its HLS side (card_fs.hls)
     if (fact('strobe', undefined)) this._install_strobe(fact('strobe', undefined));                    // S-STBREQ
+    if (fact('wifi_manager', undefined)) this._install_wifi(fact('wifi_manager', undefined));          // S-WIFIMGR
     this.s.lab.panel_done = true;                                                  // S-PANELDONE (menu.mjs)
     const lab = this.s.lab;
     lab.xcpu_served.add(CPU3);                                                     // S-CPU3: S-CPU2 leaves bank 3 to drain_cpu3
@@ -1469,7 +1486,15 @@ export class CamApp {
   // S-DISPQ's replies to the application's queue.
   pump() {
     const s = this.s, lab = s.lab, dq = lab.dispq_deliver ?? [];
-    for (let n = 0, m = 0, k = 0, d = 0, t = 0; dq.length || this.acks.length || this.play_pending.length || this.dispsync.size || this.take?.pending.length;) {
+    for (let n = 0, m = 0, k = 0, d = 0, t = 0, w = 0; this.wifi_pending.length || dq.length || this.acks.length || this.play_pending.length || this.dispsync.size || this.take?.pending.length;) {
+      if (this.wifi_pending.length) {                                              // S-WIFIMGR's callbacks
+        if (++w > 20) throw new FirmwareError(`S-WIFIMGR: more than 20 requests in one step (${this.wifi_pending.length} pending)`);
+        const what = this.wifi_pending.shift();
+        this.log.push(['wifi', `api_network's callback ${hex(this.wifi_callbacks[what])}(0): the manager's ${what} finished`]);
+        lab.call(this.wifi_callbacks[what], { d0: 0 }, null, [0, 0], 200000);
+        s.settle('S-WIFIMGR callback');
+        continue;
+      }
       if (this.take?.pending.length) {                                             // S-TAKEREQ's replies (take.mjs)
         if (++t > 200) throw new FirmwareError(`S-TAKEREQ: more than 200 replies in one step (${this.take.pending.length} pending)`);
         this.take.deliver();
@@ -1529,7 +1554,7 @@ export class CamApp {
     if (this.media && this.media.busy()) {                                         // S-MDACTRL / S-MEDIA (media.mjs)
       this.media.tick();
       for (const [k, d] of this.media.take_log()) this.log.push([`media ${k}`, d]);
-      if (lab.dispq_deliver?.length || this.acks.length || this.play_pending.length || this.dispsync.size) this.pump();
+      if (this.wifi_pending.length || lab.dispq_deliver?.length || this.acks.length || this.play_pending.length || this.dispsync.size) this.pump();
     }
   }
   // camapp 3 (TRAACK_KEPT): the transaction handed to the exec natively; the exec's result recorded at its return

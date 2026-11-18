@@ -5055,6 +5055,56 @@ export function strobeRequest(img) {
   return { request: 0x50000000 + request, serve: 0x50000000 + failed.find((o) => o !== inside[0]) };
 }
 
+// The Wi-Fi manager's requests to its task on another CPU and api_network's callbacks (fact 'wifi_manager';
+// src/lab/camapp.mjs S-WIFIMGR). D on E113: wifi_mngr_start 0x50d76631 (a0 the configuration: SSID, password; it logs
+// "Error : wifi_mngr_start" where it refuses one) stores the command record, sends its 16 bytes to the manager's
+// queue on CPU 1 (`mov -1,d1; call` at 0x50d766c4, the cross-CPU queue write) and sets pattern 1 of the manager's
+// flag there (`mov 1,d1; exth d0; call` at 0x50d766d4, the cross-CPU flag set); the stop, the function after it
+// (0x50d766f9), sets pattern 2 (`mov 2,d1; exth d0; call` at 0x50d76721, the same callee). api_network's init gives
+// the manager eight callbacks, each posting one GUI event 0x041c0001..8 with its argument: the first (0x502062f0)
+// sets api_network's started word and posts 0x041c0001, the fourth (0x50206341) clears it and posts 0x041c0004
+// (X, a walk: after the first the wizard leaves "Wi-Fi Starting" for its SSID page, after the fourth it leaves
+// "Wi-Fi Stopping"; the second, 0x041c0002, and the seventh, the error 0x041c0007, leave it where it is). Both open
+// `add -4,sp; mov d0,d1; mov 1,d0 / clr d0; movhu d0,(abs32)` before the event's load. E120 has the same forms
+// (callbacks 0x502ad502 / 0x502ad553). A body without the trace has no fact; neither has one whose callbacks are not
+// of this form (E143, whose Wi-Fi no walk has entered).
+const WIFI_START_ERROR = 'Error : wifi_mngr_start', WIFI_STARTED_EVENT = 0x041C0001, WIFI_STOPPED_EVENT = 0x041C0004;
+const WIFI_START_SPAN = 0x100, WIFI_CALLBACK_SPAN = 0x100;
+export function wifiManager(img) {
+  const strings = findString(img, WIFI_START_ERROR);
+  if (!strings.length) return undefined;
+  const callback = (event, head, after) => {
+    const at = loadsOf(img, event).map((o) => o - head.length - 6).filter((o) => (after === null || (o > after && o - after < WIFI_CALLBACK_SPAN)) && bytesAt(img, o, head) && isRet(img, o - 3));
+    return at.length === 1 ? at[0] : undefined;
+  };
+  const started = callback(WIFI_STARTED_EVENT, [0xf8, 0xfe, 0xfc, 0x81, 0x80, 0x01], null);
+  const stopped = started === undefined ? undefined : callback(WIFI_STOPPED_EVENT, [0xf8, 0xfe, 0xfc, 0x81, 0x00], started);
+  if (stopped === undefined) return undefined;
+  const { base } = imageBase(img), loads = strings.flatMap((o) => loadsOf(img, base + o));
+  if (loads.length !== 1) throw new Error(`wifiManager: "${WIFI_START_ERROR}" loaded ${loads.length} times, want 1`);
+  const start = entryOf(img, loads[0], WIFI_START_SPAN);
+  if (start === undefined) throw new Error(`wifiManager: no called entry within ${WIFI_START_SPAN} bytes before the load at ${h8(0x50000000 + loads[0])}`);
+  // the calls of the function at `from`, to its return: [{at, to, before: the three bytes before the call}]
+  const calls = (from) => {
+    const out = [];
+    let p = from;
+    for (; !isRet(img, p) && p - from < 2 * WIFI_START_SPAN; ) {
+      const c = callAt(img, p);
+      if (c) out.push({ at: p, to: c.to, before: [img[p - 3], img[p - 2], img[p - 1]] });
+      p += c ? c.len : insnLength(img[p], img[p + 1]);
+    }
+    if (!isRet(img, p)) throw new Error(`wifiManager: no return within ${2 * WIFI_START_SPAN} bytes of ${h8(0x50000000 + from)}`);
+    return { out, end: p + 3 };
+  };
+  const set = (list, pattern) => list.filter((c) => c.before[0] === 0x85 && c.before[1] === pattern && c.before[2] === 0x18);
+  const s = calls(start), t = calls(s.end);
+  const s1 = set(s.out, 1), t2 = set(t.out, 2);
+  if (s1.length !== 1 || t2.length !== 1 || s1[0].to !== t2[0].to) throw new Error(`wifiManager: ${s1.length} flag sets of pattern 1 in the start ${h8(0x50000000 + start)}, ${t2.length} of pattern 2 in the function after it, want one each to one callee`);
+  const send = s.out[s.out.indexOf(s1[0]) - 1];
+  if (!send || send.before[1] !== 0x85 || send.before[2] !== 0xff) throw new Error(`wifiManager: the call before the start's flag set is not a send with no timeout`);
+  return { send: 0x50000000 + send.at, start: 0x50000000 + s1[0].at, stop: 0x50000000 + t2[0].at, started: 0x50000000 + started, stopped: 0x50000000 + stopped };
+}
+
 // The PC state's USB-disconnect power-off (fact 'power_off.usb_disconnect'; S-NOPOWEROFF stepped over it through
 // MODEL_INFO.call_skips until the idle image's switch states kept the starts out of the PC state, src/fw/models.mjs,
 // and no stand-in reads it now): the call that posts the power-off in the function traced "UsbDisconnectSubAppStatePc",
@@ -5897,6 +5947,8 @@ export function readFacts({ img, family, resLoad }) {
   if (media !== undefined) facts.media = media;
   const strobe = strobeRequest(img);
   if (strobe !== undefined) facts.strobe = strobe;
+  const wifi = wifiManager(img);
+  if (wifi !== undefined) facts.wifi_manager = wifi;
   const bodyVersion = bodyVersionWrite(img);
   if (bodyVersion !== undefined) facts.body_version = bodyVersion;
   facts.recorder = recorder(img);
