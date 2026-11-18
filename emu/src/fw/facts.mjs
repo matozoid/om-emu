@@ -943,12 +943,28 @@ export function cbsIds(img) {
 // code; table null and no names where the build holds no reader; throws for two readers or two names of one code.
 export const MODE_DIAL_E143 = { table: 0x602243A0, names: [[1, 'P'], [2, 'A'], [3, 'S'], [4, 'M'], [10, 'MOVIE'], [53, 'MY_MODE1'],
   [54, 'MY_MODE2'], [55, 'MY_MODE3'], [56, 'MY_MODE4'], [62, 'B']] };
+const MODE_DIAL_QUERY_D1 = [0xfa, 0xc9, 0x01, 0x19], MODE_DIAL_LEAF = [0x14, 0x54, 0xfc, 0xdc], MODE_DIAL_LEAF_END = [0xf3, 0x00, 0xde, 0x00, 0x00];
 const MODE_DIAL_QUERY = [0xfa, 0xca, 0x01, 0x19], MODE_DIAL_LOAD = 24, MODE_DIAL_RUN = 16, MODEDIAL = 'MODEDIAL_';
 export function modeDial(img) {
   const { base } = imageBase(img), at = [];
   for (let o = img.indexOf(MODE_DIAL_QUERY[0]); o >= 0; o = img.indexOf(MODE_DIAL_QUERY[0], o + 1)) {
     if (!bytesAt(img, o, MODE_DIAL_QUERY)) continue;
     for (let k = o + MODE_DIAL_QUERY.length; k < o + MODE_DIAL_LOAD; k++) if (img[k] === 0xfc && img[k + 1] === 0xdc && img[k + 6] === 0xf3 && img[k + 7] === 0x94) at.push(k);
+  }
+  // The E118 family's form (E113 0x500fa5b5, X): the same walk compares in d1 (fa c9 01 19) and takes the code through
+  // a leaf, `extbu d0; call leaf` with the leaf `extbu d0; asl2 d0; mov imm32,a0; mov (d0,a0),d0; retf [],0`
+  // (14 54 fc dc imm32 f3 00 de 00 00; E113 0x500fc8c5, table 0x7dbc1558: 49, 1, 2, 3, 4, 10, 57, 42, 51 for its nine
+  // positions, D). That table has no closing 0 (the words after it are another table's), so the run read here is cut
+  // at MODE_DIAL_RUN and only the named codes are kept; the lab reads as many words as the dial has positions.
+  if (!at.length) {
+    for (let o = img.indexOf(MODE_DIAL_QUERY[0]); o >= 0; o = img.indexOf(MODE_DIAL_QUERY[0], o + 1)) {
+      if (!bytesAt(img, o, MODE_DIAL_QUERY_D1)) continue;
+      for (let k = o + 4; k < o + MODE_DIAL_LOAD; k++) {
+        if (img[k] !== 0x14 || img[k + 1] !== 0xcd) continue;
+        const leaf = k + 1 + ((img[k + 2] | (img[k + 3] << 8)) << 16 >> 16);
+        if (leaf >= 0 && bytesAt(img, leaf, MODE_DIAL_LEAF) && bytesAt(img, leaf + 8, MODE_DIAL_LEAF_END)) at.push(leaf + 2);
+      }
+    }
   }
   if (!at.length) return { table: null, names: [] };
   if (at.length > 1) throw new Error(`modeDial: dial table reads at ${at.map((k) => h8(0x50000000 + k)).join(', ')}, want one`);
