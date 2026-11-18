@@ -2297,40 +2297,11 @@ export function iicWaits(img) {
 // argument and (a read) keeps no a1 at its entry (E140's write place 0x5016c56e, not checked as its driver's);
 // throws where loads disagree or no ret follows within TOUCH_ARGS_SPAN bytes. The read's register address too
 // (read_addr, touchAddr below).
-export const TOUCH_ARGS_E143 = { write_len: { sp: 20 }, read_len: { const: 5 }, read_addr: ['d1'] };
+export const TOUCH_ARGS_E143 = { write_len: { sp: 20 }, read_len: { reg: 'a1' }, read_addr: ['d1'] };
 const TOUCH_ARGS_SPAN = 0x400, TOUCH_KEEP = 8;
-// The touch I2C-register read copies a FIXED byte count into the caller's small response buffer, not a1 bytes: a1
-// holds the I2C register/handle (E113's read saves a1->a2 and compares it to 255; E143's stores a1->a2 into the
-// transfer descriptor), NOT a length. The keep-based {reg:'a1'} fallback below therefore mis-measures the read —
-// on E113 a1 is 0x14 (20), so the lab's _i2c_read over-writes the caller's stack frame, zeroing its return address
-// and crashing the TFT boot at PC 0. {reg:'a1'} was only ever tolerated because the other bodies' a1 happened to
-// be small enough not to overrun. The real count is the read function's own immediate: it saves the caller's dest
-// (a0) into aN at entry (`mov a0,aN`), then copies to it with `mov aN,a1; mov <len>,d0; mov 1,d1; call <copy>`.
-// E113 0x5022ba06 (`mov a0,a3` at entry; tail `mov a3,a1; mov 4,d0; mov 1,d1; call 0x5005215d`) -> 4 bytes;
-// E143 0x501e4f2a (`mov a0,a3`; tail `mov a3,a1; mov 5,d0; mov 1,d1; call 0x500538bf`) -> 5 bytes. Both reads are
-// this same fixed-count shape (a1 is the register in both), so the detector returns the const for the whole family
-// and {reg:'a1'} is retained only for the bodies whose read the detector cannot see (no local image to re-port).
-// See docs/om-emu/e113-touch-read-const.md.
-function touchReadConst(img, fn) {
-  const e = fn - 0x50000000;
-  let saved = null;
-  for (let p = e, k = 0; p < e + TOUCH_ARGS_SPAN && !isRet(img, p); k++) {
-    const op = img[p];
-    if (saved === null && (op & 0xf0) === 0x90 && ((op >> 2) & 3) === 0 && (op & 3) !== 0) saved = op & 3;   // mov a0,aN (save caller dest)
-    if (saved !== null && op === (0x90 | (saved << 2) | 1)) {                                                // mov a<saved>,a1 (copy dest = caller dest)
-      let q = p + 1, imm = null;
-      for (let s = 0; s < 5 && q < e + TOUCH_ARGS_SPAN; s++) {
-        if (img[q] === 0x80) { imm = (img[q + 1] << 24) >> 24; q += 2; continue; }        // mov imm8,d0 (copy count)
-        if (img[q] === 0x2c) { imm = img[q + 1] | img[q + 2] << 8; q += 3; continue; }     // mov imm16,d0
-        const c = callAt(img, q);
-        if (c && imm !== null && imm > 0) return imm & 0xFFFF;
-        q += c?.len ?? insnLength(img[q], img[q + 1]);
-      }
-    }
-    p += callAt(img, p)?.len ?? insnLength(op, img[p + 1]);
-  }
-  return undefined;
-}
+// (A fixed-count reading of the read's `mov <n>,d0; mov 1,d1; call <copy>` tail was tried and is wrong on both bodies it
+// was read on: that <n> counts the bytes the read SENDS (slave, register), not the bytes it reads. As E143's lab constant
+// it cut a move's report short, and bin/play.mjs logged no move sample (test/test_host.mjs, the queue under load).)
 function touchLength(img, fn, read) {
   const e = fn - 0x50000000;
   let p = e, x = 0;
@@ -2357,8 +2328,7 @@ function touchLength(img, fn, read) {
   // taken there until 2026-11-18 cut the 10-byte report to 4 bytes, and HFW saw the press at 1320,3840 for 40,333, X)
   const words = [...new Set(loads32.filter((n) => n > img[p + 2]))];
   if (words.length === 1) return { sp: words[0] };
-  const c = touchReadConst(img, fn);
-  return c !== undefined ? { const: c } : { reg: 'a1' };
+  return { reg: 'a1' };
 }
 // The read's register address (read_addr, src/lab/play.mjs S-TPREG): the registers that hold its bytes, the high
 // byte first. E143's read takes one byte in d1 (its length in a1); the E144 driver's (and E125's, E120's) opens with
@@ -2372,7 +2342,7 @@ function touchAddr(img, read, len) {
   // E113's read keeps a1 at its entry and sends d1 and a1 as the address' two bytes (`movbu d3,(13,sp); mov a2,d0;
   // movbu d0,(14,sp)` at 0x5022ba99, D; the version read's d1 28, a1 20 is the controller's 0x1c14)
   if (len?.sp != null && img[read - 0x50000000 + 2] === 0x96) return ['d1', 'a1'];   // mov a1,a2, the third instruction
-  return len?.reg === 'a1' || len?.const != null ? ['d1'] : undefined;   // the single-byte-register read (a1-length or fixed-count) addresses via d1
+  return len?.reg === 'a1' ? ['d1'] : undefined;   // the single-byte-register read (a1-length or fixed-count) addresses via d1
 }
 function touchArgs(img, write, read) {
   const w = write === null ? undefined : touchLength(img, write, false), r = read === null ? undefined : touchLength(img, read, true);

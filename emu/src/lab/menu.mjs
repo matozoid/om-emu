@@ -2,7 +2,7 @@
 // (MenuLab: K-native boot, RTOS routing, CTORS, the native and the empty (S-STORE) settings store
 // and its stand-ins, S-PERSIST, the dial-table init, GUI creation and settle, the observers, B2's S-TAKEOVER and
 // H-CONNECT; persist_ids, state_names, inputs_for). Addresses are disassembly notation unless marked run-time.
-import { A, isUnmapped, refuseUnmapped, MODEL_INFO, IMAGE_BASE, ON_LAB_MODEL, fact, knob } from '../fw/model.mjs';
+import { A, isUnmapped, refuseUnmapped, MODEL_INFO, IMAGE_BASE, ON_LAB_MODEL, fact, factIf, knob } from '../fw/model.mjs';
 import { BOARD } from '../fw/board.mjs';
 import * as D from './display.mjs';
 import * as K from './kernel.mjs';
@@ -700,7 +700,7 @@ export class MenuLab extends T.TextDisplayLab {
   // setter with the model's version (src/fw/facts.mjs bodyVersionWrite). Nothing on the lab model, whose fact is not
   // given.
   body_version() {
-    const f = fact('body_version', undefined);
+    const f = factIf('body_version');
     if (!f) return;
     const m = /^(\d)\.(\d)$/.exec(MODEL_INFO.version ?? '');
     if (!m) throw new MenuError(`S-BODYVER: the model's version ${show(MODEL_INFO.version)} is not of the form N.N`);

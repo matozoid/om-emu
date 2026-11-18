@@ -1280,10 +1280,10 @@ export class CamApp {
     // and S-PLAYDEC stands in for one with a pre-reduction
     if (this.play_native) { this.module_queues.delete(apiQueues().PLAY_EXEC); this.play_native.install(); }
     if (this.s.storage?.f.hls) { this.media = new HlsMedia(this.s, this.s.storage); this.media.install(); }   // its HLS side (card_fs.hls)
-    if (fact('strobe', undefined)) this._install_strobe(fact('strobe', undefined));                    // S-STBREQ
-    this.myset_f = fact('myset_load', undefined) ?? null;                                              // S-MYSETLOAD
-    this.mic_f = fact('mic_monitor', undefined) ?? null;                                               // S-MICMON
-    if (fact('wifi_manager', undefined)) this._install_wifi(fact('wifi_manager', undefined));          // S-WIFIMGR
+    if (factIf('strobe')) this._install_strobe(factIf('strobe'));                    // S-STBREQ
+    this.myset_f = factIf('myset_load') ?? null;                                              // S-MYSETLOAD
+    this.mic_f = factIf('mic_monitor') ?? null;                                               // S-MICMON
+    if (factIf('wifi_manager')) this._install_wifi(factIf('wifi_manager'));          // S-WIFIMGR
     this.s.lab.panel_done = true;                                                  // S-PANELDONE (menu.mjs)
     const lab = this.s.lab;
     lab.xcpu_served.add(CPU3);                                                     // S-CPU3: S-CPU2 leaves bank 3 to drain_cpu3
