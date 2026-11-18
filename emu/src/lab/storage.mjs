@@ -600,6 +600,14 @@ export class Storage {
     const file = { path, size: bytes.length, folder: this.dcf.folder, number: this.next_file };
     this.next_file += 1;
     this.files.push(file);
+    // where the body asks for it (src/fw/models.mjs dcf_remount, the evidence there): the removal's and the
+    // insertion's requests again, the mount at which the DCF database reads the new file; its numbering mount gives
+    // the next file's number
+    if (MODEL_INFO.dcf_remount) {
+      this.remove('S-RECFILE');
+      this.insert('S-RECFILE');
+      this.log.push(['recfile', `${path}: the card mounted again, next file ${this.next_file}`]);
+    }
     return file;
   }
   // the file layer's drive status, natively

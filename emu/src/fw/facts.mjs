@@ -3227,7 +3227,7 @@ export function fileSystem(img) {
 // vt[0] 0x506d1691 calls fn(arg) when fn is not 0; E144's 0x50878f17 and 0x50878f59, the same instruction for
 // instruction), and the media control's command 1, the format (getMediaCtrlCBC's 1 -> 16 in the application,
 // 0x506a844c)
-export const MEDIA_LIB = { mount: { unmounted: 0, mounted: 8, rec_end: 2, end: 8 }, switch_event: 0x02020000, cab: { closure: 28, fn: 16, format: 1 } };
+export const MEDIA_LIB = { mount: { unmounted: 0, mounted: 8, rec_end: 2, end: 8 }, switch_event: 0x02020000, cab: { closure: 28, fn: 16, format: 1, unprotect: 5, plain: { fn: 28, arg: 32 } } };
 const MDA_PROC_FILE = 'OlyHfwOpeMdaCtrlProcessEvFw.cpp', MDA_RECEPTION_FILE = 'OlyHfwReception.cpp', MDA_MANAGER_FILE = 'CapMed_MediaManager.cpp';
 const MDA_HEAD = 0x20, MDA_FILE = 0x60, MDA_BODY = 0x1000, MDA_SEND = 0x40, MDA_SLOTS = 4, MDA_SLOT_SPAN = 0x30;
 const MDA_VT = 6, MDA_VT_FILE = 0x80, MDA_SD = 0x8000;

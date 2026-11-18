@@ -116,6 +116,16 @@ export class HlsMedia {
   _install_end() {
     const lab = this.lab, c = this.f.cab, sites = new Set(c.sites.map(runtime)), other = new Set(c.other.map(runtime));
     const seen = (r) => {
+      // Reset Protect's end (command c.unprotect) comes from one of the handler's other sites, in an event that holds
+      // a plain function and its argument (c.plain) where the format's holds a closure object; its destructor calls
+      // the function (D on E113: the constructor writes both, the destructor `calls` the one with the other). The
+      // camera base that would take and delete the event does not run, so the lab makes that call (_end). X
+      // 2026-11-18 on E113: without it the screen stays at Busy; read as a closure it faults
+      if (other.has(r.mdr >>> 0) && this.mda?.cmd === c.unprotect) {
+        const ev = r.a0 >>> 0, fn = lab.sim.u32(ev + c.plain.fn) >>> 0;
+        this.ends.push({ ev, id: lab.sim.read(ev + 4, 1)[0] | lab.sim.read(ev + 5, 1)[0] << 8, plain: true, fn, arg: lab.sim.u32(ev + c.plain.arg) >>> 0, from: where(r.mdr) });
+        return;
+      }
       if (other.has(r.mdr >>> 0)) throw new MediaError(`S-MDAEND: the media control's request to the camera base from ${where(r.mdr)}, the path of another command or an error: not modelled`);
       if (!sites.has(r.mdr >>> 0)) return;
       const sim = lab.sim, ev = r.a0 >>> 0, clo = sim.u32(ev + c.closure) >>> 0;
@@ -127,7 +137,7 @@ export class HlsMedia {
       const cmd = r.d0 & 0xFF, media = r.d1 & 0xFFFF;
       this.log.push(['control', `command ${cmd}, media ${media} (the application's own start)`]);
       this.started = { cmd, media };
-      if (cmd !== c.format) throw new MediaError(`S-MDAEND: the media control's command ${cmd} (media ${media}): only the format's (${c.format}) end is stood in`);
+      if (cmd !== c.format && cmd !== c.unprotect) throw new MediaError(`S-MDAEND: the media control's command ${cmd} (media ${media}): only the format's (${c.format}) and Reset Protect's (${c.unprotect}) ends are stood in`);
       if (this.mda !== null) throw new MediaError('S-MDAEND: a second media control start while the format runs');
       this.mda = { cmd, media };
     };
@@ -138,6 +148,15 @@ export class HlsMedia {
     const lab = this.lab;
     if (!e.fn) { this.log.push(['end', `request ${e.id} to the camera base from ${e.from}: no closure function, its handling not done`]); return; }
     if (this.mda === null) throw new MediaError(`S-MDAEND: request ${e.id} to the camera base from ${e.from} with no media control start seen`);
+    if (e.plain) {
+      this.log.push(['end', `request ${e.id} to the camera base from ${e.from}: its function ${h8(disasm(e.fn))} called with ${h8(e.arg)} (the event's destructor's call)`]);
+      this.mda = null;
+      lab.sim.write(e.ev + this.f.cab.plain.fn, new Uint8Array(4));            // the destructor, should it run, does not call it again
+      lab.calls(disasm(e.fn), { a0: e.arg }, undefined, undefined, LIMIT);
+      this.s.settle('S-MDAEND');
+      this.ended += 1;
+      return;
+    }
     this.storage.renumber('S-MDAEND');
     const call = disasm(lab.sim.u32(lab.sim.u32(e.clo)));
     this.log.push(['end', `request ${e.id} to the camera base from ${e.from}: its closure ${h8(e.clo)} (${h8(disasm(e.fn))}) run through ${h8(call)}`]);

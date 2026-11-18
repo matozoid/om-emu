@@ -1376,7 +1376,16 @@ export const MODELS = {
       // the camera base its two events, 12986 and the closure's 12965, from 0x5063ef10 and 0x5063f034, and stayed
       // on "Busy" until the lab answered them, S-MDAEND)
     },
+    // REC_FILE is not native here: the recFile rule reads no rec_file fact on E113 (X 2026-11-18: with rec_native true
+    // the session stops at 'neither ports FACTS nor models gives rec_file'), and the build has no whole-file recorder
+    // (fact recorder null), so S2's picture goes to the card through fileif (storage.mjs fileif_picture)
     rec_native: false,
+    // dcf_remount: after each fileif picture the lab sends the removal's and the insertion's requests again
+    // (storage.mjs fileif_picture), so the firmware's DCF database, which learns of a fileif file only at a mount,
+    // counts it. X 2026-11-18 on E113: the count table (fact dcf.counts) 0,0,0,0,0 before, 1,0,1,0,0 after, and the
+    // Playback Menu's Edit, Print Order and Reset Protect, grey with the count 0, are enabled; a second 'dcf lists'
+    // request alone left the counts 0 (X)
+    dcf_remount: true,
     // core_byte: the board-identity byte the lab's core-id getter returns (src/fw/facts.mjs coreByte, src/lab/hle.mjs
     // core_id, menu.mjs dial select). The coreByte rule wants one leaf getter `movbu (0x8ff0xxxx),d0; retf`; E113 has
     // NONE (the rule returns null, board defers to hand). Measured why: E143's board byte (0x97f00254) is a strap-lookup
