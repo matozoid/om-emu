@@ -5136,6 +5136,30 @@ export function mysetLoad(img) {
   return { request: MYSET_LOAD_REQUEST, load: 0x50000000 + loads[0] };
 }
 
+// The microphone level monitor's notifications (fact 'mic_monitor'; src/lab/camapp.mjs S-MICMON). D on E113: the
+// menu's Recording Volume popup starts the monitor with HLS transaction 13530 and stops it with 13531 (the builders
+// `mov id,d0` of the one sender each), registers its callback for class 0x60 and then holds every other GUI event
+// back until event 0x9c01, which that callback posts for the class's notifications 302 and 303 (its table). The
+// component's state functions send them: 302 after the start it asked the audio driver for is done, 303 after a stop
+// or a failed start, each through a function of the form `call getter; clr d0; mov d0,(4,sp); mov 96,d0; mov d0,d1;
+// mov 302|303,a1; call notify; ret`, entered by call with no argument read. E120 has the same two functions. A body
+// without both, or without the two transactions, has no fact.
+const MIC_MONITOR_START = 13530, MIC_MONITOR_STOP = 13531;
+export function micMonitor(img) {
+  const notifier = (code) => {
+    const pat = [0x00, 0x42, 0x04, 0x80, 0x60, 0x81, 0x25, code & 0xff, code >> 8, 0xdd], found = [];
+    for (let o = img.indexOf(0x00); o >= 0; o = img.indexOf(0x00, o + 1)) {
+      if (bytesAt(img, o, pat) && img[o - 7] === 0xdd && isRet(img, o - 10)) found.push(o - 7);
+    }
+    return found;
+  };
+  const sent = (id) => { let n = 0; const pat = [0x2c, id & 0xff, id >> 8]; for (let o = img.indexOf(0x2c); o >= 0; o = img.indexOf(0x2c, o + 1)) if (bytesAt(img, o, pat)) n += 1; return n; };
+  const started = notifier(302), stopped = notifier(303);
+  if (!started.length || !stopped.length || !sent(MIC_MONITOR_START) || !sent(MIC_MONITOR_STOP)) return undefined;
+  if (started.length !== 1 || stopped.length !== 1) throw new Error(`micMonitor: ${started.length} notifiers of 302 and ${stopped.length} of 303, want 1 and 1`);
+  return { start: MIC_MONITOR_START, stop: MIC_MONITOR_STOP, started: 0x50000000 + started[0], stopped: 0x50000000 + stopped[0] };
+}
+
 // The Wi-Fi manager's requests to its task on another CPU and api_network's callbacks (fact 'wifi_manager';
 // src/lab/camapp.mjs S-WIFIMGR). D on E113: wifi_mngr_start 0x50d76631 (a0 the configuration: SSID, password; it logs
 // "Error : wifi_mngr_start" where it refuses one) stores the command record, sends its 16 bytes to the manager's
@@ -6030,6 +6054,8 @@ export function readFacts({ img, family, resLoad }) {
   if (strobe !== undefined) facts.strobe = strobe;
   const myset = mysetLoad(img);
   if (myset !== undefined) facts.myset_load = myset;
+  const mic = micMonitor(img);
+  if (mic !== undefined) facts.mic_monitor = mic;
   const wifi = wifiManager(img);
   if (wifi !== undefined) facts.wifi_manager = wifi;
   const bodyVersion = bodyVersionWrite(img);

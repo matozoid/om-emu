@@ -119,6 +119,9 @@ export function mulhs(a, b) { let h = mulhu(a, b); if (a < 0) h = (h - b) | 0; i
 const FB = new Float32Array(2), FBI = new Int32Array(FB.buffer);
 const MIN_NORMAL = 1.1754943508222875e-38;
 export function normalOrZero(v) { const e = (v >>> 23) & 0xff; return e !== 0xff && !(e === 0 && (v & 0x7fffff)); }
+// udf06's operands: ±Inf is ordered too (I: E113's microphone level, disasm 0x503b0561, compares the dB of a silent
+// buffer, -Inf from its logf, with -46.0 and takes "not above" as level 0); NaN and subnormals stay faults
+function ordered(v) { return normalOrZero(v) || (v & 0x7fffffff) === 0x7f800000; }
 export function udfFloat(nn, dn, dm, pc) {
   if (!normalOrZero(dn) || !normalOrZero(dm) || (nn === 5 && !(dm & 0x7fffffff))) throw new Fault(1, pc);
   FBI[0] = dn; FBI[1] = dm;
@@ -139,7 +142,7 @@ function udfFloatToInt(x, pc) {
   FBI[0] = x; return Math.trunc(FB[0]) | 0;
 }
 function udfCompare(dn, dm, pc) {
-  if (!normalOrZero(dm) || !normalOrZero(dn)) throw new Fault(1, pc);
+  if (!ordered(dm) || !ordered(dn)) throw new Fault(1, pc);
   FBI[0] = dm; FBI[1] = dn;
   pswFlags((FB[0] === FB[1] ? Z : 0) | (FB[0] < FB[1] ? N : 0), 15, 0);
 }
@@ -528,7 +531,7 @@ export function step(refetch = false) {
 }
 
 export function udfCmpFlags(dn, dm, pc) {
-  if (!normalOrZero(dm) || !normalOrZero(dn)) throw new Fault(1, pc);
+  if (!ordered(dm) || !ordered(dn)) throw new Fault(1, pc);
   FBI[0] = dm; FBI[1] = dn;
   return (FB[0] === FB[1] ? Z : 0) | (FB[0] < FB[1] ? N : 0);
 }
