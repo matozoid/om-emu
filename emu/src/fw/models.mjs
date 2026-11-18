@@ -1323,7 +1323,13 @@ export const MODELS = {
     // REC_FILE records S2's file natively, its header the header maker's (X: test_storage's S2 file, its Exif Model
     // 'E-M10MarkII', the firmware's count and directory entry; docs/model-survey.md finding 146)
     rec_native: true,
-    board: { family: 'E118' },
+    // timer2: the same second timer unit as E113's (evidence with E113's board fact below). E120's own tables, read
+    // from the image (D): channel table run-time 0x60026750 (15 records: 0x9b800010 + 12 n, IRQ 24 for channels 0..9 and
+    // 25..29 for 10..14) and mask table 0x60116b88 (status 0x9b8000c4.., IE 0x9b8000dc.., bit), named by the start
+    // 0x50065990. Identical in layout to E113's. hz as on E113 (I). Without it the GUI's 10 ms tick stood still and
+    // no value popup's OK closed it (its hold timer never expired).
+    board: { family: 'E118', timer2: { base: 0x9B800010, channels: 15, stride: 12, status: 0x9B8000C4, ie: 0x9B8000DC, hz: 16384,
+      groups: [[0, 9, 24], [10, 10, 25], [11, 11, 26], [12, 12, 27], [13, 13, 28], [14, 14, 29]] } },
     // through E122 (port_via): the family's reference, whose overrides it takes over (the evidence at E122's entry)
     port_via: 'E122',
     // as E122's (src/fw/models.mjs E122, the evidence there): the reset path's early driver inits, the table walk

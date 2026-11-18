@@ -168,7 +168,11 @@ async function evfOnce(pad, ok) {
         }
       }
     }
-    ok(lab.state() === state0 && digest() === before, `${what}: the GUI's state and the frame are unchanged (0x${state0.toString(16)} -> 0x${lab.state().toString(16)})`);
+    // the frame before, seen again within 1.5 s: a mark the firmware blinks on its own timer (X: E120's auto-ISO value
+    // on the EVF's shooting screen, once the body's software timers run) may be on its other phase at the tap's end; a
+    // frame the tap changed does not come back. A body that blinks nothing answers at the first look, as before
+    const back = () => { for (let k = 0; k < 6; k++) { if (digest() === before) return true; s.idle_slice(lab.lab_time() + 300e6); } return false; };
+    ok(lab.state() === state0 && back(), `${what}: the GUI's state and the frame are unchanged (0x${state0.toString(16)} -> 0x${lab.state().toString(16)})`);
     if (pad) {
       // a later tap inside the pad, more than the driver's 800 ms double-tap window after the first, ends as CLICK on
       // every body (E120's first one too, PAD_FIRST_END)

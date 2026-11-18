@@ -215,11 +215,14 @@ const press = (k) => { s.key(k, 'down'); s.camapp.pump(); idle(lab.lab_time() + 
 // PROBE_REDRAW's key, where the body has one: pressed until the screen is back to its frame and GUI state before the
 // first press, n times; redraw() then presses it n times and checks the GUI state came back
 const cycle = () => {
-  const bytes = () => s.frame('boundary', true)[2].slice(), f0 = bytes(), state = lab.state();
+  // the frames compared over a window each, on the pixels that held one value through both: a mark the firmware
+  // blinks on its own timer (X: E120's auto-ISO value on the shooting screen, once the body's software timers run)
+  // lands on either phase at a press's end and is no part of the screen's frame
+  const f0 = window_(), state = lab.state();
   for (let n = 1; n <= REDRAW_MAX; n++) {
     press(REDRAW);
-    const f = bytes();
-    if (lab.state() === state && f.length === f0.length && f.every((v, i) => v === f0[i])) return { n, state };
+    const f = window_();
+    if (lab.state() === state && f.val.length === f0.val.length && f.val.every((v, i) => v === f0.val[i] || !f.stable[i] || !f0.stable[i])) return { n, state };
   }
   throw new Error(REDRAW + ' did not bring the screen back to its frame in ' + REDRAW_MAX + ' presses');
 };

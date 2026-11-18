@@ -50,7 +50,10 @@ export const ERASE_DIALOG = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E1
 // opens the dialog, closes it with MENU (before OK the GUI takes it, X) and erases by S-PLAYSEQ's erase itself, as on a
 // body without the dialog. Delete on the protected picture is not pressed there: it opens no dialog (X) but its protect
 // blink, which E143's GUI ends within a second, stays through MENU, PLAY, OK, LEFT and RIGHT (X; I: on a GUI timer too)
-export const ERASE_YES_UNTIMED = new Set(['E122', 'E118', 'E120']);
+// E120 left the set on 2026-11-18: with its second timer unit modelled (src/fw/models.mjs E120 board.timer2) the GUI's
+// timers run and Yes sends eraseCurrent (X: test/test_playinfo.mjs meets S-PLAYSEQ's refusal of request 21, the body
+// having no erase fact)
+export const ERASE_YES_UNTIMED = new Set(['E122', 'E118']);
 // the bodies whose UI_IN tables hold no Delete key (finding 111; the player refuses the key there, X)
 export const NO_DELETE_KEY = new Set(['E145', 'E129', 'E132']);
 // of the native bodies, those whose shooting service starts again after PLAY's return from playback in the lab (X); on
