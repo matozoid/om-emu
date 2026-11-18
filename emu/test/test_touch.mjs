@@ -27,12 +27,17 @@ import zlib from 'node:zlib';
 // there cycles it, X: the frames after)
 export const TOUCH_ICON = {
   E143: [35, 465], E148: [30, 372], E144: [40, 333], E139: [40, 333], E134: [40, 333], E137: [40, 333], E142: [40, 333],
-  E140: [40, 333], E125: [40, 333], E130: [40, 333], E133: [40, 333], E118: [40, 333], E120: [40, 333], E122: [40, 333],
+  E140: [40, 333], E125: [40, 333], E130: [40, 333], E133: [40, 333], E118: [40, 333], E120: [40, 333], E122: [40, 333], E113: [40, 333],
 };
 // a cell of the super control panel OK opens, the pixel the test taps (X: the panel's frame; the tap selects the AF
 // Mode cell on the E118 family and Face Priority on E144, docs/model-survey.md findings 75 and 87)
-export const SCP_CELL = { E144: [360, 240], E118: [360, 240], E120: [360, 240], E122: [360, 240] };
+export const SCP_CELL = { E144: [360, 240], E118: [360, 240], E120: [360, 240], E122: [360, 240], E113: [360, 240] };
 const IDLE_MS = 6000;
+// E113's session starts on the super control panel as its information display (no live view image in the lab), which
+// shows no touch mode icon: the pixel of TOUCH_ICON lies in its "S-IS AUTO" cell, and a tap there reaches HFW and the
+// GUI and draws nothing while the panel is not opened by OK (X: the frame's digest holds; the panel's own tap after OK
+// is SCP_CELL's check)
+const START_PANEL = new Set(['E113']);
 // the bodies besides E143 whose touch the test covers: every body with a touch panel the lab runs (src/fw/models.mjs
 // touch not false, a touch driver: src/fw/facts.mjs touchDriver)
 export const TOUCH_BODIES = Object.keys(TOUCH_ICON).filter((m) => m !== 'E143');
@@ -89,7 +94,8 @@ export async function touchSession() {
   ok(gestures.some(([n, gx, gy]) => n === 'PRESS' && gx === x && gy === y), `${MODEL}: HFW saw the press at ${x},${y} (${JSON.stringify(gestures)})`);
   ok(gestures.some(([n, gx, gy]) => (n === 'CLICK' || n === 'LIFTOFF') && gx === x && gy === y), `${MODEL}: HFW saw the tap's end at ${x},${y} (${JSON.stringify(gestures)})`);
   ok(lab.state() === state0, `${MODEL}: the GUI stays in its shooting state (0x${state0.toString(16)} -> 0x${lab.state().toString(16)})`);
-  ok(digest() !== before, `${MODEL}: the tap on the touch mode icon changed the frame`);
+  if (START_PANEL.has(MODEL)) ok(digest() === before, `${MODEL}: the tap on the start screen's panel cell left the frame as it was`);
+  else ok(digest() !== before, `${MODEL}: the tap on the touch mode icon changed the frame`);
   if (SCP_CELL[MODEL]) {
     const [cx, cy] = SCP_CELL[MODEL];
     s.key('ok', 'down'); s.camapp.pump(); s.idle_slice(lab.lab_time() + 150e6);

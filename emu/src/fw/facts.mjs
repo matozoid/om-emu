@@ -2336,12 +2336,13 @@ function touchLength(img, fn, read) {
   let p = e, x = 0;
   if (img[p] === 0xf8 && img[p + 1] === 0xfe) x = -((img[p + 2] << 24) >> 24);
   else if (img[p] === 0xfa && img[p + 1] === 0xfe) x = -((img[p + 2] | img[p + 3] << 8) << 16 >> 16);
-  const loads = [];
+  const loads = [], loads32 = [];
   let keep = false;
   for (let k = 0; p < e + TOUCH_ARGS_SPAN && !isRet(img, p); k++) {
     const op = img[p], o2 = img[p + 1];
     if (op === 0xf8 && (o2 & 0xfc) === 0xbc) loads.push(img[p + 2] - x);
     if (op === 0xfa && (o2 & 0xfc) === 0xbc) loads.push((img[p + 2] | img[p + 3] << 8) - x);
+    if ((op & 0xfc) === 0x58) loads32.push(o2 - x);                              // mov (d8,sp),Dn
     if (k < TOUCH_KEEP && (op & 0xfc) === 0x94 && (op & 3) !== 1) keep = true;   // mov a1,An (An != a1)
     p += callAt(img, p)?.len ?? insnLength(op, o2);
   }
@@ -2350,6 +2351,12 @@ function touchLength(img, fn, read) {
   if (args.length > 1) throw new Error(`touchArgs: ${h8(fn)} loads the u16 stack arguments ${args.join(', ')} (frame ${img[p + 2]}), want one`);
   if (args.length) return { sp: args[0] };
   if (!(read && keep)) return undefined;
+  // E113's read 0x5022ba06 loads its length as a 32-bit word, `mov (36,sp),d0` at 0x5022baa4 (frame 32: the caller's
+  // (4,sp), 10 at the report's read 0x5022c2a5, 1, 4 and 117 at others, D), and stores it as the transfer's count; the
+  // `mov 4,d0` before its copy call is the count of the bytes it SENDS (slave, d1, a1), not of the read (the const 4
+  // taken there until 2026-11-18 cut the 10-byte report to 4 bytes, and HFW saw the press at 1320,3840 for 40,333, X)
+  const words = [...new Set(loads32.filter((n) => n > img[p + 2]))];
+  if (words.length === 1) return { sp: words[0] };
   const c = touchReadConst(img, fn);
   return c !== undefined ? { const: c } : { reg: 'a1' };
 }
@@ -2362,6 +2369,9 @@ function touchAddr(img, read, len) {
   for (let p = read - 0x50000000, k = 0; k < TOUCH_KEEP && !isRet(img, p); k++, p += insnLength(img[p], img[p + 1])) {
     if (bytesAt(img, p, TOUCH_ADDR16) && bytesAt(img, p + 5, [0xf8, 0x96, img[p + 4] + 1])) return ['d1', 'a1'];
   }
+  // E113's read keeps a1 at its entry and sends d1 and a1 as the address' two bytes (`movbu d3,(13,sp); mov a2,d0;
+  // movbu d0,(14,sp)` at 0x5022ba99, D; the version read's d1 28, a1 20 is the controller's 0x1c14)
+  if (len?.sp != null && img[read - 0x50000000 + 2] === 0x96) return ['d1', 'a1'];   // mov a1,a2, the third instruction
   return len?.reg === 'a1' || len?.const != null ? ['d1'] : undefined;   // the single-byte-register read (a1-length or fixed-count) addresses via d1
 }
 function touchArgs(img, write, read) {

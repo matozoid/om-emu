@@ -1711,6 +1711,10 @@ export const MODELS = {
     // firmware GUI tasks at 1..13 still preempt to process each posted event, and equal priority keeps the home task's
     // own GUI program from running mid-post. This is the configuration check_nav's pri60 mutant exercises (NAV_PRI = LAB_PRI).
     nav_pri: 14,
+    // post_preempts: with nav_pri = lab_pri = 14 the GUI task (priority within 1..13) outranks the lab task, so a lab
+    // sendEvent (the touch posts, S-TOUCHMAP) is taken by the GUI before the call returns; src/lab/nav.mjs's
+    // 'GUI ran during post' guard is lifted (X: test/test_touch.mjs stopped there on E113)
+    post_preempts: true,
     overrides: {
       // The settings DB init (src/lab/menu.mjs SETTINGS_DB_INIT): the cross-build map anchors E143's 0x503c5473 at
       // 0x50173d5c, an unrelated function (it takes a semaphore and reads registry item 60881), which loads no defaults:

@@ -136,7 +136,9 @@ export class NavLab extends MM.MenuLab {
     // refused as a storm; a GUI that defers an event into itself again (check_nav N3's MENU) takes it before each set,
     // so every set counts
     this.wrap(MM.DISPATCH, (take) => (hle, r) => {
-      if (this.posting) throw new NavError(`GUI ran during post (dispatch ${h8(MM.DISPATCH)} reached before sendEvent returned): the lab task does not outrank the GUI task`);
+      // post_preempts (models.mjs): a kernel whose levels leave the lab task no priority above the GUI task, so the
+      // GUI takes the posted event before sendEvent returns; the order is the firmware's own and the guard does not apply
+      if (this.posting && !MODEL_INFO.post_preempts) throw new NavError(`GUI ran during post (dispatch ${h8(MM.DISPATCH)} reached before sendEvent returned): the lab task does not outrank the GUI task`);
       this.pending_events.delete(this.sim.u32(r.sp + 396));
       return take(hle, r);
     });
@@ -242,7 +244,9 @@ export class NavSession {
   // ---- primitives
   message(index) { return this.lab.message_for(index); }
   // POST_HOOKS as read at call time (PlaySession.set raises it for its call: _post_hooks).
-  post_hooks() { return this._post_hooks ?? POST_HOOKS; }
+  // On a post_preempts body (models.mjs) the GUI works the event off inside the post, so the post's budget is the
+  // settle's.
+  post_hooks() { return this._post_hooks ?? (MODEL_INFO.post_preempts ? Math.max(POST_HOOKS, this.settle_hooks ?? STEP_HOOKS) : POST_HOOKS); }
   // sendEvent(index) from the lab task (priority 50): GESetEvent posts, the GUI must not run.
   post(index, data = 0, kind = 0) {
     if (!(index >= 1 && index <= 334)) throw new NavError(`sendEvent index ${index}: outside 1..334 (0x5115b2a5/0x5115b2af return)`);

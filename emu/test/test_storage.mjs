@@ -557,7 +557,11 @@ export async function storageSession() {
   // blank store's 4K 60p mode has no rate in their tables, docs/hle-gaps.md 4.8.5; E134 X, its mode 1 at 60 and the
   // rate check's logs 0x3a040001 and 0x39000105): strictly, so an answer flags the table; S-SCENE's live view on the
   // E143 family only (its banks are E143's: on the E144 family 0x50534dd1's address is not the table's, X)
-  const MOVIE_ZERO = ['E144', 'E139', 'E137', 'E125', 'E134'].includes(MODEL), LIVE_VIEW = BOARD.family === 'E143';
+  // E113 too, for another reason: the port's place of the query, 0x504cd2c6, is the movie module's record getter
+  // (0x504e20fd copies three words and a halfword of the module's struct; its callers 0x502051a4 and 0x502051d3 take
+  // the recording's frames and time from it, D), which reads 0 with no movie taken (X: all 24 bytes 0 on both cards);
+  // the time the shooting screen draws (00:43:15 on the 8 GiB card, X) comes by another path, not read
+  const MOVIE_ZERO = ['E144', 'E139', 'E137', 'E125', 'E134', 'E113'].includes(MODEL), LIVE_VIEW = BOARD.family === 'E143';
   const names = STORAGE.names, DIR = `DCIM/100${names.folder}`, FILE1 = `${DIR}/${names.file}0001.${names.ext}`;
   let saved = null;
   const session = (card) => {

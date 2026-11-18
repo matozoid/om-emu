@@ -39,7 +39,7 @@ export const ERASE_NATIVE = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E1
 // a native one the session then erases by S-PLAYSEQ's erase itself (erase() below). The E118 family's Delete opens it
 // since its REC_FILE runs natively (X at the round's merge; I: the DCF database now holds the pictures, the one
 // difference there); on E122 the dialog's Yes then makes no request in the lab (ERASE_YES_UNTIMED)
-export const ERASE_DIALOG = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E139', 'E134', 'E137', 'E142', 'E140', 'E125', 'E130', 'E133', 'E122', 'E118', 'E120']);
+export const ERASE_DIALOG = new Set(['E143', 'E146', 'E147', 'E144', 'E148', 'E139', 'E134', 'E137', 'E142', 'E140', 'E125', 'E130', 'E133', 'E122', 'E118', 'E120', 'E113']);
 // of the bodies with the dialog, those whose Yes sends nothing in the lab (docs/model-survey.md finding 155): the E118
 // family's Yes handler arms a GUI timer and acts when it runs out, and the GUI's timers count on its 10 ms tick, a
 // cyclic of the OS layer on the software timer driver, whose 2 ms service runs on the second timer unit, which the lab
