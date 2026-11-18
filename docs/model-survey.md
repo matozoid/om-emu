@@ -1804,8 +1804,17 @@ A port considers the 936 32-bit hex literals of the lab's ported sources (`emu/s
    writer of `+0x700..+0x7ff`, the one store area not read for the planes, fills 8 entries from colours of its own
    (`0x50307b33`; its callers' loops end at `cmp 8`, `0x50303a7d` and `0x50304458`, D), not a third group. Every OSD1
    and OSD2 pixel in E122's sessions was below 32 (X: 31, 5 and 4 at the start, S1, the menu and PLAY, TFT and EVF).
-   The compositor keeps refusing a pixel of 32 or more (PAL_FIELD); what the chip does with one is ?, and only the
+   The compositor kept refusing a pixel of 32 or more (PAL_FIELD); what the chip does with one is ?, and only the
    panel's picture with such a pixel written into the plane would settle it.
+   **2026-11-18: the GUI does draw such pixels.** After the menu's Reset (flash mode back to Auto) the shooting
+   screen, the Super Control Panel, draws a flash mark of 358 pixels into GUI layer 0 (OSD1) at x 654..670,
+   y 9..40: 117 of index 33, 189 of 35, 52 of 38, on the fill 7 (X on E113 and on E120, the same mark). Entries 1, 3
+   and 6 of that plane's palette are then opaque black, opaque orange and a part-transparent black (`0x1f808000`,
+   `0x1fd33289`, `0x13808000`), which are an outline, a body and a shadow, and the camera's flash mark is orange; the
+   `+0x700` area read 0 throughout at that moment (X, E113), so it is not those pixels' colours. The compositor now
+   takes the low 5 bits of an OSD1 or OSD2 pixel of 32..63 (I, A: what bit 5 itself does on the panel is ?; the mark
+   is the one the camera blinks while the flash charges, so a blink attribute is the guess) and still refuses a pixel
+   of 64 or more. What would settle it: a photograph of the panel on that screen.
 98. **The OSD level words** (2026-11-10, `docs/om1-vsc-spec.md` section 12). E122's opens write `0x100` to OSD7..OSD9
    (`0x503097b7..0x503097c6`); the one writer of a percentage, `0x502f93f9` (`2 floor(p 128 / 100)`), has five
    calls: three in the EVF panel's command scheduler `0x502f946a`, with a byte of the command record (`0x502f968b`,

@@ -5,8 +5,8 @@
 //   the video area and the background, nothing else with no plane enabled (the open's state)
 //   OSD3's palette (GUI layer 2's, id 0) in the bank 0x1b8 bit 4 selects (+0xa00 set, +0x800 clear), the pixel's low 7
 //     bits, an unwritten entry counted (PAL_UNWRITTEN), a stray bit of 0x1b8 refused (OSDCP2_FIELD)
-//   OSD2's 32 entries at +0x680 (layer 1's) and OSD1's at +0x600 (layer 0's), a pixel of 32 or more not drawn
-//     (PAL_FIELD)
+//   OSD2's 32 entries at +0x680 (layer 1's) and OSD1's at +0x600 (layer 0's), a pixel of 32..63 by its low 5 bits, one of 64 or
+//     more not drawn (PAL_FIELD)
 //   the GUI's three layers as E122's clock warning leaves them (X): OSD1 filled with 31, OSD2 with 5, OSD3 with 255 and
 //     a figure, the figure over the dimming in the order code 3 the opens write in 0x1a4; a word that is no code 0..5
 //     refused (ORDER), an unwritten one too (UNWRITTEN)
@@ -177,7 +177,7 @@ async function child() {
   {
     const t = fresh();
     tft(t);
-    t.canvas(720, 480, 31, [[10, 10, 20, 20, 3], [40, 10, 20, 20, 40]]);
+    t.canvas(720, 480, 31, [[10, 10, 20, 20, 3], [40, 10, 20, 20, 70], [70, 10, 20, 20, 35]]);
     t.reg(0x030, 6); t.reg(0x044, CANVAS); t.reg(0x048, CANVAS);
     t.reg(0x680 + 4 * 31, CLEAR); t.reg(0x680 + 4 * 3, RED);
     t.reg(0x600 + 4 * 31, CLEAR); t.reg(0x600 + 4 * 3, GREEN);
@@ -185,10 +185,11 @@ async function child() {
     let r = t.compose();
     ok(r.status === 0 && r.drawn === 1 << 4 && r.px(10, 10) === (RED & 0xFFFFFF) && r.px(0, 0) === BG, `OSD2 +0x680: drawn ${hex(r.drawn)} ${hex(r.px(10, 10))}`);
     const pf = r.errors.find((e) => e.code === V.E.PAL_FIELD);
-    ok(pf && pf.off === 0x680 && pf.value === 400 && pf.args[1] === 40 && r.px(40, 10) === BG, `OSD2 pixel 40 not drawn: ${JSON.stringify(r.errors)}`);
+    ok(pf && pf.off === 0x680 && pf.value === 400 && pf.args[1] === 70 && r.px(40, 10) === BG, `OSD2 pixel 70 not drawn: ${JSON.stringify(r.errors)}`);
+    ok(r.px(70, 10) === (RED & 0xFFFFFF), `OSD2 pixel 35 takes entry 3 (the low 5 bits): ${hex(r.px(70, 10))}`);
     t.m.devices.vsc.dbg[V.chanDbg(0, V.CH.VIEW)] = 1 << 3;                  // OSD1 alone
     r = t.compose();
-    ok(r.drawn === 1 << 3 && r.px(10, 10) === (GREEN & 0xFFFFFF), `OSD1 +0x600: drawn ${hex(r.drawn)} ${hex(r.px(10, 10))}`);
+    ok(r.drawn === 1 << 3 && r.px(10, 10) === (GREEN & 0xFFFFFF) && r.px(70, 10) === (GREEN & 0xFFFFFF), `OSD1 +0x600: drawn ${hex(r.drawn)} ${hex(r.px(10, 10))}, pixel 35 ${hex(r.px(70, 10))}`);
   }
   // the GUI's three layers as E122's clock warning leaves them: layer 0 (OSD1) all 31, layer 1 (OSD2) all 5, a
   // half-transparent black, layer 2 (OSD3) 255 with a figure of entry 13; each plane its own canvas

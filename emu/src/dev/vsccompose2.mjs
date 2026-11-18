@@ -48,9 +48,13 @@
 //                  with palette id 2, OSD2 layer 1 with id 1 and OSD3 layer 2 with id 0 (X: E122's clock warning, layer
 //                  2's indices 13..33 and its fill 255 in OSD3, layer 0's fill 31 in OSD1, layer 1's 5 in OSD2)
 //   pixel index    OSD3's the low 7 bits (I, as kind 2: layer 2's fill 255 takes entry 127, transparent, X); OSD1's
-//                  and OSD2's below 32, a larger one is not drawn and is counted (PAL_FIELD: the firmware uploads 32
-//                  entries for layers 0 and 1 and its palette setter refuses an index of 32 or more there, the bounds
-//                  {32, 32, 256}, D, docs/model-survey.md finding 97; what the chip does with such a pixel is ?)
+//                  and OSD2's the low 5 bits below 64 (I: the firmware uploads 32 entries for layers 0 and 1 and its
+//                  palette setter refuses an index of 32 or more there, the bounds {32, 32, 256}, D, yet the flash
+//                  mark the shooting screen draws into layer 0 after the menu's Reset is of pixels 33, 35 and 38 on
+//                  a fill of 7, X on E113 and E120, and entries 1, 3 and 6 of that palette are then opaque black,
+//                  opaque orange and a part-transparent black, the mark's outline, body and shadow: what bit 5 does
+//                  on the panel, a blink for one, is ?); a pixel of 64 or more is not drawn and is counted
+//                  (PAL_FIELD: what the chip does with one is ?; docs/model-survey.md finding 97)
 //   OSD order      as kind 2's, the code in the low 3 bits (the setter `and -8`, called by the layer-custom path when
 //                  the custom record's osd_mixorder at +40 is not 255, on all three bodies, D: finding 96). The GUI's
 //                  default is 3 (152 of the 154 calls of its screens' mode function ask mode 1, D), as
@@ -97,7 +101,7 @@ const KINDS = {
     palette: (q) => ({ sel: 0x364 + 8 * q, bit: 0x10, banks: [0x800 + 0x800 * q, 0xA00 + 0x800 * q], entries: 128, mask: 0x7F }) },
   3: { mix: [[0x1B0, 0x111], [0x1B4, 0x11]], rszZero: [8], stack: ORDER_STACK,
     palette: (q) => (q === 2 ? { sel: 0x1B8, bit: 0x10, banks: [0x800, 0xA00], entries: 128, mask: 0x7F }
-      : { sel: null, bit: 0, banks: [q === 1 ? 0x680 : 0x600], entries: 32, mask: null }) },
+      : { sel: null, bit: 0, banks: [q === 1 ? 0x680 : 0x600], entries: 32, mask: null, fold: 64 }) },
 };
 const K = KINDS[BOARD.vsc.kind] ?? null;
 // kind 3: whether the build sets the level words (a build that names none draws its planes at the full level)
@@ -189,7 +193,7 @@ export function compose2(v, c) {
         for (let i = 0; i < pw; i++) {
           let idx = row[cols[i]];
           if (P.mask !== null) idx &= P.mask;
-          else if (idx >= P.entries) { if (!outside++) firstOutside = idx; continue; }
+          else if (idx >= P.entries) { if (idx < P.fold) idx &= P.entries - 1; else { if (!outside++) firstOutside = idx; continue; } }
           if (!v.dbg[pf + idx]) { if (!unwritten++) firstUnwritten = idx; continue; }
           const word = pal[first + idx], tr = ((word >>> 24) & 0x1F) << 16, dst = out[d0 + i];
           out[d0 + i] = L[tr | (word & 0xFF) << 8 | (dst & 0xFF)] | L[tr | (word >>> 8 & 0xFF) << 8 | (dst >>> 8 & 0xFF)] << 8

@@ -618,8 +618,9 @@ notation) was found to share and not share with kind 2 (2026-10-30, `docs/model-
   plane's bit in the header's ASSUMED word and a note (what the chip does with its unwritten level word is ?;
   finding 48, 2026-10-30).
 - **Pixel index:** OSD3's low 7 bits (I, as kind 2: layer 2's fill 255 takes entry 127, transparent, X); OSD1 and
-  OSD2 index 32 entries, and a pixel of 32 or more is refused (PAL_FIELD, not drawn): no code read says what the chip
-  does with it (?). The firmware gives those planes no such pixel's colour: the palette set uploads 32 entries for GUI
+  OSD2 index 32 entries; a pixel of 32..63 takes the entry of its low 5 bits (I: the flash mark of the shooting
+  screen is drawn so, finding 97's 2026-11-18 note; what bit 5 does is ?) and one of 64 or more is refused
+  (PAL_FIELD, not drawn): no code read says what the chip does with it (?). The firmware gives those planes no such pixel's colour: the palette set uploads 32 entries for GUI
   layers 1 and 0 (`0x50304cb5..0x50304d73`, `0x50304d87..0x50304e47`) and the GUI's palette setters refuse an index
   at or above the layer's bound, {32, 32, 256} at `0x60d46130` (`0x50a5c9c4..0x50a5c9eb`, D); every OSD1 and OSD2
   pixel in E122's sessions was below 32 (X: 31, 5 and 4 at the start, S1, the menu and PLAY on the TFT and the EVF;
