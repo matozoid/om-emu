@@ -543,6 +543,7 @@ export class Player {
     if (this.session?.storage?.switches) used.push('S-SDSWITCH');                         // a card line request answered
     if (this.session?.camapp?.movie_rate_answered) used.push('S-MOVRATE');                 // the record time with frame rate 0
     if (this.session?.camapp?.wifi_requests?.length) used.push('S-WIFIMGR');                // the Wi-Fi manager's start or stop answered
+    if (this.session?.camapp?.acc_ring_samples) used.push('S-ACCRING');                    // the accelerometer's ring polled
     if (this.session?.camapp?.strobe_requests?.length) used.push('S-STBREQ');              // a synchronous strobe request with its task dormant
     const media = this.session?.camapp?.media;
     if (media?.f.ctrl && (media.formats || media.ctrl)) used.push('S-MDACTRL');            // a Card Formatting from the menu (media.mjs)

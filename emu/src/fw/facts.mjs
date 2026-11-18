@@ -5151,6 +5151,27 @@ export function paramStore(img) {
   return out;
 }
 
+// The accelerometer's sample ring (fact 'acc_ring'; src/lab/camapp.mjs S-ACCRING). D on E113: the menu's Level Adjust
+// (OlyHfwOpeLevel::calibration 0x506ad822 -> 0x501f819d -> 0x5005a253 -> 0x50045460) averages 100 samples (0x50045a05),
+// each taken by a reader (0x5004457a) that polls `P` and sleeps 16 ms while it answers 1, no new sample. P compares its
+// client's read index (a byte of the 12-byte client table) with the ring's write index, the byte I, and copies the
+// 16-byte entry (four words: x, y, z and the temperature) of the 32-entry ring R: `exthu d0; udf00 12,d0; add table,d0;
+// mov -3,a1; add d0,a1; movbu (a1),d0; extb d0; cmp -1,d0; beq; movbu (a1),d2; movbu (I),d1; ...; and 31,d0; ...;
+// asl 4,d0; mov d0,a1; add R,a1`. The sampler task that fills the ring needs the sensor's serial transfer, which the
+// lab does not run on this body, so the GUI task polled for ever. Returns { poll: P, index: I, ring: R }, or undefined
+// (E120 has the same module; E143 and the later bodies have another accelerometer module, src/lab/acc.mjs); throws for two.
+export function accRing(img) {
+  const found = [];
+  const head = [0x1c, 0xf9, 0x00, 0x0c, 0xfc, 0xc0], mid = [0xfc, 0xdd, 0xfd, 0xff, 0xff, 0xff, 0xf1, 0x61, 0xf0, 0x41, 0x10, 0xa0, 0xff, 0xc8];
+  for (let o = 0; o + 0x40 < img.length; o++) {
+    if (img[o] !== 0x1c || !bytesAt(img, o, head) || !bytesAt(img, o + 10, mid)) continue;
+    if (!bytesAt(img, o + 25, [0xf0, 0x49, 0xfc, 0xa9]) || !bytesAt(img, o + 41, [0xf8, 0xe0, 0x1f]) || !bytesAt(img, o + 46, [0x0c, 0x10, 0xf8, 0xc0, 0x04, 0xf1, 0xe1, 0xfc, 0xd1])) continue;
+    found.push({ poll: 0x50000000 + o, index: u32(img, o + 29), ring: u32(img, o + 55) });
+  }
+  if (found.length > 1) throw new Error(`accRing: ${found.length} ring polls`);
+  return found[0];
+}
+
 // The microphone level monitor's notifications (fact 'mic_monitor'; src/lab/camapp.mjs S-MICMON). D on E113: the
 // menu's Recording Volume popup starts the monitor with HLS transaction 13530 and stops it with 13531 (the builders
 // `mov id,d0` of the one sender each), registers its callback for class 0x60 and then holds every other GUI event
@@ -6075,6 +6096,8 @@ export function readFacts({ img, family, resLoad }) {
   if (myset !== undefined) facts.myset_load = myset;
   const mic = micMonitor(img);
   if (mic !== undefined) facts.mic_monitor = mic;
+  const accring = accRing(img);
+  if (accring !== undefined) facts.acc_ring = accring;
   const wifi = wifiManager(img);
   if (wifi !== undefined) facts.wifi_manager = wifi;
   const bodyVersion = bodyVersionWrite(img);

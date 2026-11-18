@@ -803,6 +803,7 @@ export const CAMAPP_STAND_INS = {
   "A-SCPUM4-2": "(OM_EMU_SCPU=native) a link line the sub-CPU does not drive (its pin not an output, an open-drain 1, the reset held) reads as S-SCPUDEV's lines while its reset is held: pin 102 low, the message line high; what the board makes of a released pin is ?",
   "A-SCPUM4-3": "(OM_EMU_SCPU=native) MN pin 107 high holds the sub-CPU's NRST low, S-SCPUDEV's polarity: a pin reset of the STM32L4 that keeps its backup domain (the RTC, the backup registers) and its SRAM; the sub-CPU is powered on at the link's start with a blank backup domain (the camera's has run since its battery went in, ?)",
   "S-WIFIMGR": "(a body with the Wi-Fi manager's requests, src/fw/facts.mjs wifiManager, fact 'wifi_manager': E113 and E120 of the unpacked bodies) the Wi-Fi manager's task runs on a CPU the lab has not, and no radio is modelled (docs/a53-spec.md): the start's two cross-CPU calls (the command's send to the manager's queue, the set of pattern 1 of its flag) and the stop's one (pattern 2) are stepped over with 0, and the lab then calls api_network's own callback as the manager would, argument 0: the first (started, GUI event 0x041c0001) after a start, the fourth (stopped, 0x041c0004) after a stop. So the menu's Connection to Smartphone shows its SSID and password page and End Wi-Fi returns; no access point exists, no client ever connects, and none of the other six callbacks comes. Which callback follows which request is X (a walk on E113: with no callback the wizard stays at 'Wi-Fi Starting' / 'Wi-Fi Stopping' for good, as it does after the second or the error callback); that a camera's manager answers a start with exactly this one and argument 0 is I",
+  "S-ACCRING": "(a body with the accelerometer's sample ring, src/fw/facts.mjs accRing, fact 'acc_ring': E113 and E120 of the unpacked bodies) the accelerometer's sampler: the menu's Level Adjust averages 100 samples, each taken by a reader that polls the ring and sleeps 16 ms while no new sample is there, and the sampler task that fills the ring needs the sensor's serial transfer, which the lab does not run on this body, so the GUI task polled for ever and the menu took no key (X). Before each poll the stand-in stores one new sample, all four words 0, and advances the ring's write index (D: the 32 entries of 16 bytes and the index byte). With it the calibration answers 0, its trace 'OlyHfwOpeLevel::calibration rotate=11 result=0', and the application leaves the menu for the shooting screen (X; whether the camera does the same is not known). What the sensor reads on a level camera in this module's units is not known, so the sample is not a level camera's (I), and the gauge on the shooting screen has no model here",
   "S-MICMON": "(a body with the microphone level monitor's notifiers, src/fw/facts.mjs micMonitor, fact 'mic_monitor': E113 and E120 of the unpacked bodies; not under camapp 3, where the components run) the monitor component's answer to the menu's Recording Volume popup: the popup starts the monitor with one HLS transaction and stops it with another, and the GUI then requeues every other event until its callback has posted the event the notification makes (D on E113: TRA 13530, event 0x9c01; with S-TRAACK's answer alone the popup's first refresh event went round until the storm guard stopped it, X). MIC_MONITOR_NS after the transaction the stand-in calls the component's own notifier natively from the lab task: started (302) for the start, stopped (303) for the stop, as the component's state functions do when the audio driver has answered (I: how long the driver takes is not known; the popup's OK holds the GUI's events for a 100 ms timer, 0x9ac6, and requeues an early notification for as long, which the camera's clock ends and the lab's, standing still inside a step, does not: X, the storm guard again with the notification sent after the step). The audio driver is not asked and no sound is captured: the meter reads the level of the driver's untouched buffer",
   "S-MYSETLOAD": "(a body with the settings' Myset load, src/fw/facts.mjs mysetLoad, fact 'myset_load': E113 and E120 of the unpacked bodies; not under camapp 3, where the components run) the menu's recall of a stored Myset (Reset/Myset, Yes) is HLS transaction 12971 with the stored set's data id and kind 0, which S-TRAACK answers at the exec; the part its component would do, the settings device's load of that data (the function that logs loadCustom:MyMode, D: the component's method calls it through the device's vtable for kind 0), is called after the step with the request's id, so the settings stored by Set come back (X, a walk: Digital Tele-converter set On after the Set reads Off after the recall). Another kind is refused. Without it the recall was answered and changed nothing",
   "S-STBREQ": "(a body with the strobe module's request, src/fw/facts.mjs strobeRequest, fact 'strobe': E113 and E120 of the unpacked bodies) a synchronous request to the strobe module (its request function with no completion callback: a flash setting's change, as the menu's Reset makes for each of them; the addresses are with the rule) answered 0 at once while the strobe task is dormant: the boot's user start starts that task and the lab, ending the init task, does not, so the request's receive of the task's reply (no timeout) held the GUI task for good, the menu's Reset > Yes staying on the screen with every key dead (X, E113 and E120). The request is not sent, the module's own check of it (its pending state) is not run, and nothing of the flash is modelled: the setting the application wrote is its own. A request with a callback runs natively (it does not wait). A-STBREQ-1 (I): the strobe task's reply to a setting's change carries nothing its caller reads (D: the request returns 0 whatever the reply holds).",
@@ -851,6 +852,7 @@ export class CamApp {
     this.wifi_requests = [];        // S-WIFIMGR: every request answered
     this.myset_f = null;            // S-MYSETLOAD: the fact, on a body that has it and whose components do not run
     this.mic_f = null;              // S-MICMON: the fact, on a body that has it and whose components do not run
+    this.acc_ring_samples = 0;       // S-ACCRING: the samples given
     this.mic_notes = [];            // S-MICMON: the notifications to send, [due lab ns, 'started' or 'stopped']
     this.mic_noted = [];            // S-MICMON: the notifications sent
     this.myset_loads = [];          // S-MYSETLOAD: the Myset loads to run after the step, [data id, kind]
@@ -924,6 +926,16 @@ export class CamApp {
   }
   // S-STBREQ: the strobe module's synchronous request (f.request, no callback in a0) answered 0 while the strobe task,
   // the static task whose entry is the nearest below the task loop's site f.serve, is dormant
+  // S-ACCRING: one new sample in the accelerometer's ring before each poll of it (src/fw/facts.mjs accRing)
+  _install_acc_ring(f) {
+    const ACC_RING = 32, ACC_ENTRY = 16, lab = this.s.lab;
+    lab.observe(f.poll, () => {
+      const sim = lab.sim, w = (sim.read(f.index, 1)[0] + 1) % ACC_RING;
+      sim.write(f.ring + ACC_ENTRY * w, new Uint8Array(ACC_ENTRY));
+      sim.write(f.index, new Uint8Array([w]));
+      this.acc_ring_samples += 1;
+    }, 'S-ACCRING', true);
+  }
   _install_strobe(f) {
     const STB_TASK_SPAN = 0x1000;   // E113's loop site is 0x1f5 past its task's entry, E120's 0x7c5 (X)
     const lab = this.s.lab;
@@ -1283,6 +1295,7 @@ export class CamApp {
     if (factIf('strobe')) this._install_strobe(factIf('strobe'));                    // S-STBREQ
     this.myset_f = factIf('myset_load') ?? null;                                              // S-MYSETLOAD
     this.mic_f = factIf('mic_monitor') ?? null;                                               // S-MICMON
+    if (factIf('acc_ring')) this._install_acc_ring(factIf('acc_ring'));              // S-ACCRING
     if (factIf('wifi_manager')) this._install_wifi(factIf('wifi_manager'));          // S-WIFIMGR
     this.s.lab.panel_done = true;                                                  // S-PANELDONE (menu.mjs)
     const lab = this.s.lab;
